@@ -1,0 +1,31 @@
+---
+Syntax
+---
+
+Blocks of code
+    ({[<>]})
+
+
+---
+Semantics
+---
+
+Stack snapshots.
+    At different points, a snapshot is taken of the stack.
+    Registers A-B-C give the top three elements of the previous snapshot
+    Registers D-E-F give the one before
+    Snapshot can be restored to a specific state when commanded so
+
+
+
+---
+Functions
+---
+
+int-and-add: string->int->int or string->string->int; cast both to int, add
+
+
+
+---
+Random
+---
