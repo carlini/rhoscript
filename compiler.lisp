@@ -31,13 +31,25 @@
 			   (list (cadr x) (mapcar #'car (caddr x)) (cadddr x)))
 			 body))))))
 
+(defmacro wrap-fn (&body b)
+  `(lambda (nret &rest args)
+     (setq stack (append args stack))
+     ,@b
+     (case nret
+       (0 nil)
+       (1 (pop stack))
+       (2 (list (pop stack) (pop stack)))
+       (otherwise (loop for i from 1 to nret collect (pop stack))))))
+
 (commands
+  (cmd dup () (type)
+       (car stack))
   (cmd add ((int a) (int b)) (int)
        (+ a b))
   (cmd sub ((int a) (int b)) (int)
        (- a b))
   (cmd call ((fun f)) ()
-       (funcall f))
+       (funcall f 0))
   (cmd range ((int n)) (list)
        (let ((arr (make-array n :adjustable t)))
 	 (loop for n from 0 to (- n 1) do (setf (aref arr n) n))
@@ -48,11 +60,9 @@
 	     (cons-cell (cons result nil)))
 	 (setf (cdr cons-cell)
 	       (lambda ()
-		 (if (< (1+ i) (length l))
+		 (if (< i (length l))
 		     (progn
-		       (push (aref l i) stack)
-		       (funcall fn)
-		       (vector-push-extend (pop stack) result)
+		       (vector-push-extend (funcall fn 1 (aref l i)) result)
 		       (incf i))
 		     (setf (cdr cons-cell) nil))))
 	 cons-cell))
@@ -61,32 +71,33 @@
 	    (funcall (cdr l)))
        (car l))
   (cmd call-n-times ((fun fn) (int n)) ()
-       (loop for i from 0 to (1- n) do (funcall fn))))
+       (loop for i from 0 to (1- n) do (funcall fn 0))))
 
 (defun parse (commands)
   (let ((command-names (mapcar #'car *command-info*)))
-    `(lambda ()
-       ,@(mapcar
-	  (lambda (cmd)
-	    (cond
-	      ((listp cmd)
-	       `(push ,(parse cmd) stack))
-	      ((and (symbolp cmd) (member cmd command-names))
-	       (let* ((full-command (assoc cmd *command-info*))
-		      (args (cadr full-command))
-		      (results (caddr full-command)))
-		 (let ((the-command (cons (with-under cmd) (n-times (length args) 
-							      '(pop stack)))))
-		   (cond
-		     ((= (length results) 0)
-		      the-command)
-		     ((= (length results) 1)
-		      `(push ,the-command stack))
-		     (t
-		      `(setq stack (append ,the-command stack)))))))
-	      (t
-	       `(push ,cmd stack))))
-	  commands))))
+    `(wrap-fn
+      ,@(mapcar
+	 (lambda (cmd)
+	   (cond
+	     ((listp cmd)
+	      `(push ,(parse cmd) stack))
+	     ((and (symbolp cmd) (member cmd command-names))
+	      (let* ((full-command (assoc cmd *command-info*))
+		     (args (cadr full-command))
+		     (results (caddr full-command)))
+		(let ((the-command (cons (with-under cmd) (n-times (length args) 
+							    '(pop stack)))))
+		  (cond
+		    ((= (length results) 0)
+		     the-command)
+		    ((= (length results) 1)
+		     `(push ,the-command stack))
+		    (t
+		     `(setq stack (append ,the-command stack)))))))
+	     (t
+	      `(push ,cmd stack))))
+	 commands)
+       )))
 
 (defun do-compile (commands)
   (make-commands)
@@ -94,20 +105,20 @@
 	 (restore-stack '()))
      (declare (ignore restore-stack))
      (labels ,*commands*
-       (funcall ,(parse commands))
+       (funcall ,(parse commands) 0)
        stack)))
 
-;(print (do-compile '(10000 range (1 add) map force)))
+(defun compress-code (input)
+  (make-commands)
+  (let ((bindings '((dup a) (add b) (sub c) (call b) (range d) (map c) (force b) (call-n-times c))))
+    (labels ((deeprepl (x)
+	       (if (listp x)
+		   (mapcar #'deeprepl x)
+		   (let ((r (cadr (assoc x bindings))))
+		     (if r r x)))))
+      (deeprepl input))))
 
-; 3.3 seconds
-; 8.7b cycles
-(time 
- (eval (do-compile '(5 100000000 (3 add) call-n-times))))
+(compress-code '(100 range 1000 ((1 add) map force) call-n-times))
 
-
-;; (funcall
-;;  (lambda (inc outc)
-;;    `(lambda ,(loop for i from 0 to (1- inc) collect 
-;; 		  (intern (concatenate 'string "ARG" (write-to-string i))))
-;;       arg0))
-;;  3 4)
+;(time (eval (do-compile '(100 range 1000 ((1 add) map force) call-n-times))))
+(eval (do-compile '(5 dup add)))
