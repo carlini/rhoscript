@@ -31,15 +31,20 @@
 			   (list (cadr x) (mapcar #'car (caddr x)) (cadddr x)))
 			 body))))))
 
-(defmacro wrap-fn (&body b)
-  `(lambda (nret &rest args)
-     (setq stack (append args stack))
-     ,@b
-     (case nret
-       (0 nil)
-       (1 (pop stack))
-       (2 (list (pop stack) (pop stack)))
-       (otherwise (loop for i from 1 to nret collect (pop stack))))))
+(defvar *count* 0)
+
+(defun sym ()
+  (intern (concatenate 'string
+		       "FN"
+		       (write-to-string (incf *count*)))))
+
+(defun tree-assoc (tr list)
+  (if (null list)
+      nil
+      (if (tree-equal tr (car (car list)))
+	  (car list)
+	  (tree-assoc tr (cdr list)))))
+
 
 (commands
   (cmd dup () (type)
@@ -62,7 +67,8 @@
 	       (lambda ()
 		 (if (< i (length l))
 		     (progn
-		       (vector-push-extend (funcall fn 1 (aref l i)) result)
+		       (let ((res (funcall fn 1 (aref l i))))
+			 (vector-push-extend res result))
 		       (incf i))
 		     (setf (cdr cons-cell) nil))))
 	 cons-cell))
@@ -73,40 +79,9 @@
   (cmd call-n-times ((fun fn) (int n)) ()
        (loop for i from 0 to (1- n) do (funcall fn 0))))
 
-(defun parse (commands)
-  (let ((command-names (mapcar #'car *command-info*)))
-    `(wrap-fn
-      ,@(mapcar
-	 (lambda (cmd)
-	   (cond
-	     ((listp cmd)
-	      `(push ,(parse cmd) stack))
-	     ((and (symbolp cmd) (member cmd command-names))
-	      (let* ((full-command (assoc cmd *command-info*))
-		     (args (cadr full-command))
-		     (results (caddr full-command)))
-		(let ((the-command (cons (with-under cmd) (n-times (length args) 
-							    '(pop stack)))))
-		  (cond
-		    ((= (length results) 0)
-		     the-command)
-		    ((= (length results) 1)
-		     `(push ,the-command stack))
-		    (t
-		     `(setq stack (append ,the-command stack)))))))
-	     (t
-	      `(push ,cmd stack))))
-	 commands)
-       )))
-
-(defun do-compile (commands)
-  (make-commands)
-  `(let ((stack '())
-	 (restore-stack '()))
-     (declare (ignore restore-stack))
-     (labels ,*commands*
-       (funcall ,(parse commands) 0)
-       stack)))
+(defvar stack nil)
+(defvar *defined-vars* nil)
+;(defvar *function-definitions* nil)
 
 (defun compress-code (input)
   (make-commands)
@@ -118,7 +93,148 @@
 		     (if r r x)))))
       (deeprepl input))))
 
-(compress-code '(100 range 1000 ((1 add) map force) call-n-times))
+(defun group-together (bindings)
+  (let ((res '()))
+    (loop for item in bindings do
+	 (if (not (assoc (car item) res))
+	     (push item res)
+	     (push (cadr item) (cdr (assoc (car item) res)))))
+    res))
+
+(defun typeof (el)
+  (cond
+    ((numberp el) 'int)
+    ((listp el) 'list)
+    ((vectorp el) 'list)
+    ((functionp el) 'fun)
+    (t (error `(this is very bad ,el)))))
+
+(defun is-prefix (shorter longer)
+  (if (null shorter) 
+      t
+      (if (null longer)
+	  nil
+	  (and (eq (car shorter) (car longer))
+	       (is-prefix (cdr shorter) (cdr longer))))))
+
+(defun do-decode (possible-commands types)
+  (let ((possible 
+	 (remove-if-not
+	  (lambda (x)
+	    (is-prefix (cadr (assoc x *command-info*)) types))
+	  (cdr possible-commands))))
+    (print possible-commands)
+    (print types)
+    (print possible)
+    (assert (= (length possible) 1))
+    (car possible)))
+
+(defun do-compile-2 (commands)
+  (setf stack nil)
+  (setf *defined-vars* nil)
+  (make-commands)
+  `(let ((stack '())
+	 (restore-stack '()))
+     (declare (ignore restore-stack))
+     (labels ,*commands*
+       ,(cons 'progn (uncompress-pass-2 (uncompress-pass-1 commands)))
+       (funcall #'fn1 0)
+       stack)))
+
+;; Turns the compressed input program to a set of defuns referencing each other.
+(defun uncompress-pass-1 (program)
+  (let ((defuns '())
+	(fnid 0))
+    (defun helper (input)
+      (incf fnid)
+      (let ((myid (intern (concatenate 'string "FN" (write-to-string fnid)))))
+	(push
+	 (list
+	  myid
+	  (mapcar
+	   (lambda (cmd)
+	     (cond
+	       ((listp cmd)
+		(list 'fun (helper cmd)))
+	       ((numberp cmd)
+		(list 'int cmd))
+	       (t
+		(list 'builtin cmd))))
+	   input))
+	 defuns)
+	myid))
+    (helper program)
+    defuns))
+
+;; Wraps everything with the lisp defuns so everything actually runs
+(defun uncompress-pass-2 (defuns)
+  (mapcar
+   (lambda (input)
+     (let ((fnid (car input))
+	   (body (cadr input)))
+       `(let ((first t))
+	  (defun ,fnid (nret &rest args)
+	    (if first
+		(let* ((fn-body (uncompress-pass-3 ',body (append args stack)))
+		       (fn-lambda (eval `(labels ,*commands* ,fn-body))))
+		  (print '("Doing a decode for fn" ,fnid))
+		  (setf first nil)
+		  (defun ,(with-under fnid) (args)
+		    (apply fn-lambda args))
+		  (apply fn-lambda (cons nret args)))
+		(,(with-under fnid) (cons nret args)))))))
+   defuns))
+
+;; Returns a lambda which runs the full program given by the input
+(defun uncompress-pass-3 (input stack)
+  (let* ((types (mapcar #'typeof stack))
+	 (bindings '((dup a) (add b) (sub c) (call b) (range d) (map c) (force b) (call-n-times c)))
+ 	 (inverse-bindings (group-together (mapcar #'reverse bindings))))
+    `(lambda (nret &rest args)
+       (setq stack (append args stack))
+       ,@(mapcar
+	 (lambda (cmd)
+	   (case (car cmd)
+	     (int
+	      (push 'int types)
+	      `(push ,(cadr cmd) stack))
+	     (fun
+	      (push 'fun types)
+	      `(push #',(cadr cmd) stack))
+	     (builtin
+	      (let* ((decoded (do-decode (assoc (cadr cmd) inverse-bindings) types))
+		     (full (assoc decoded *command-info*))
+		     (args (cadr full))
+		     (results (caddr full)))
+		(dotimes (i (length args)) (pop types))
+		(setf types (append results types))
+		(let ((the-command `(,(with-under decoded) ,@(n-times (length args) '(pop stack)))))
+		  (cond
+		    ((= (length results) 0)
+		     the-command)
+		    ((= (length results) 1)
+		     `(push ,the-command stack))
+		    (t
+		     `(setq stack (append ,the-command stack)))))))))
+	 input)
+	      
+       (case nret
+	 (0 nil)
+	 (1 (pop stack))
+	 (2 (list (pop stack) (pop stack)))
+	 (otherwise (loop for i from 1 to nret collect (pop stack)))))))
+       
+
+(let ((comp (compress-code '(100 range 100000 ((2 add) map force) call-n-times))))
+;  (print comp)
+;(let ((comp (compress-code '(20 range (1 (add) call) map force))))
+;(let ((comp (compress-code '(20 range (1 add) map force))))
+;(let ((comp (compress-code '(2 (((1 add) call) call) call))))
+;(let ((comp (compress-code '(2 3 add))))
+;  (print (uncompress-pass-2
+;	  (uncompress-pass-1 comp))))
+  (time (eval (do-compile-2 comp))))
+
 
 ;(time (eval (do-compile '(100 range 1000 ((1 add) map force) call-n-times))))
-(eval (do-compile '(5 dup add)))
+;(eval (do-compile '(5 dup add)))
