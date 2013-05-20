@@ -26,6 +26,7 @@ int-and-add: string->int->int or string->string->int; cast both to int, add
 
 group-together: list->list; [(a,b),(a,c),(b,d),(c,e),(c,f)]->[(a,(a,c)),(b,d),(c,(e,f))]
 
+type-unaware-equals: Coerce as good as possible and comapre types.
 
 ---
 Random
