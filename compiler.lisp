@@ -6,8 +6,14 @@
 	 (vector-push-extend item result))
     result))
 
+(set-macro-character #\] (get-macro-character #\)))
+(set-macro-character #\[
+		     (lambda (stream char)
+		       `(run ',(read-delimited-list #\] stream t))))
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter *commands* nil)
+  (defparameter *full-commands* nil)
   (defparameter *command-info* nil)
 
   (defmacro n-times (n &body body)
@@ -59,6 +65,7 @@
   (defmacro commands (&body body)
     (real-commands body))
   (defun real-commands (body)
+    (setf *full-commands* body)
     (labels ((gen-cmd (kind name args res cmd)
 	       (declare (ignore res))
 	       (case kind
@@ -93,6 +100,8 @@
 			     body)))))))
 
 (defvar null-symbol (gensym))
+
+;(defun create-docstring
 
 (defun list-get (list n)
   (if (< n (length (car list)))
@@ -153,10 +162,19 @@
        "Swap the order of the top two elements on the stack."
        (list b a))
   (cmd eq ((type a) (type b)) (bool)
+       "Compares the top two elements of the stack for equality."
        (equalp a b))
   (cmd neq ((type a) (type b)) (bool)
+       "Compares the top two elements of the stack for inequality."
        (not (equalp a b)))
+  (cmd gt ((int a) (int b)) (bool)
+       "Checks if the first argument is larger than the second."
+       (not (> a b)))
+  (cmd gte ((int a) (int b)) (bool)
+       "Checks if the first argument is larger than or equal to the second."
+       (not (>= a b)))
   (cmd drop ((type a)) ()
+       "Removes the top element of the stack."
        (declare (ignore a)))
   (cmd print () ()
        (format t "Stack dump:~%")
@@ -164,48 +182,85 @@
 	    (format t "   ~a. ~a~%" i el))
        (format t "~%"))
   (cmd rot ((type a) (type b) (type c)) (type type type)
+       "Rotates the top three elements: A B C -> B C A"
        (list b c a))
   (cmd unrot ((type a) (type b) (type c)) (type type type)
+       "Inverted rotate of the top three elements: A B C -> C A B"
        (list c a b))
   (cmd or ((bool a) (bool b)) (bool)
+       "Logical or of the top two elements of the stack."
        (or a b))
   (cmd add ((int a) (int b)) (int)
        (+ a b))
   (cmd multiply ((int a) (int b)) (int)
        (* a b))
   (cmd subtract ((int a) (int b)) (int)
-       (- a b))
+       (- b a))
+  (cmd divide ((int a) (int b)) (int)
+       (floor (/ b a)))
+  (cmd mod ((int a) (int b)) (int)
+       (mod b a))
   (cmd abs ((int a)) (int)
        (abs a))
+  (cmd even ((int a)) (bool)
+       (evenp a))
+  (cmd odd ((int a)) (bool)
+       (oddp a))
   (mak inc (int) (int)
        1 add)
 ;  (mak inc-all (list) (list)
 ;       (inc) map)
   (cmd arg-a () (type)
+       "Pushes the top element of the stack at the time of the last
+        context establishment to the stack."
        (car (car argument-restore-stack)))
   (cmd arg-b () (type)
+       "Pushes the second to top element of the stack at the time of the last
+        context establishment to the stack."
        (cadr (car argument-restore-stack)))
   (cmd arg-c () (type)
+       "Pushes the third to top element of the stack at the time of the last
+        context establishment to the stack."
        (caddr (car argument-restore-stack)))
   (cmd arg-d () (type)
+       "Pushes the forth to top element of the stack at the time of the last
+        context establishment to the stack."
        (cadddr (car argument-restore-stack)))
-  (cmd sub ((int a) (int b)) (int)
-       (- a b))
   (cmd call ((fun f)) ()
-       (funcall f 0))
+       "Takes a function off the stack and runs it."
+       (funcall f 0 nil))
   (cmd explode ((list l)) ()
+       "Pushes each element of a list on to the stack; the head becomes the top."
        (with-forced l list
 	 (loop for x across (reverse list) do
 	      (push x stack))))
+  (cmd implode ((int i)) (list)
+       (let ((a (new-array)))
+	 (loop for j from 1 to i do
+	      (vector-push-extend (pop stack) a))
+	 (list a)))
   (cmd range ((int n)) (list)
+       "Generates a list of numbers from 0 to n."
        (let ((arr (make-array n :adjustable t)))
 	 (loop for n from 0 to (- n 1) do (setf (aref arr n) n))
 	 (list arr)))
   (cmd with-index ((list l)) (list)
+       "Returns a new list, where each element is a list of the index and previous element."
        (list-to-list-iter l
 	 (next
 	  (vector-push-extend (list (to-array (list index each))) result))))
+  (cmd outer ((list a) (list b)) (list)
+       (list-to-list-iter a
+	 (next
+;	  (print each)
+	  (let ((tmp each))
+	    (vector-push-extend
+	     (list-to-list-iter b
+	       (next
+		(vector-push-extend (list (to-array (list tmp each))) result)))
+	     result)))))
   (cmd sum ((list l)) (int)
+       "Computes the sum of a list."
        (with-forced l list
 	 (loop for el across list sum el)))
   (cmd min ((list l)) (int)
@@ -217,7 +272,18 @@
   (cmd map ((fun fn) (list l)) (list)
        (list-to-list-iter l
 	 (next
-	  (vector-push-extend (funcall fn 1 each) result))))
+	  (vector-push-extend (funcall fn 1 (list each)) result))))
+  (cmd reduce ((fun fn) (list l)) (list)
+       (list-to-list-iter l
+	 (next
+	  (if (funcall fn 1 (list each))
+	      (vector-push-extend each result)))))
+  (cmd sort ((list l)) (list)
+       (with-forced l list
+	 (list (sort list #'<))))
+  (cmd reverse ((list l)) (list)
+       (with-forced l list
+	 (list (reverse list))))
   (cmd any ((list l)) (list)
        (not (loop for i from 0 until (eq (list-get l i) null-symbol) never (list-get l i))))
   (cmd all ((list l)) (list)
@@ -235,7 +301,7 @@
   (cmd fold ((fun fn) (type init) (list l)) (type)
        (with-forced l list
 	 (loop for el across list do
-	      (setf init (funcall fn 1 init el)))
+	      (setf init (funcall fn 1 (list init el))))
 	 init))
   (cmd length ((list l)) (int)
        (with-forced l list
@@ -302,8 +368,19 @@
        (if (not (null (cdr l)))
 	   (funcall (cdr l)))
        l)
+  (cmd ite ((fun a) (fun b) (bool case)) ()
+       (if case
+	   (funcall a 0 nil)
+	   (funcall b 0 nil)))
+  (cmd if ((fun a) (bool case)) ()
+       (if case
+	   (funcall a 0 nil)))
+  (cmd do-while ((fun fn)) ()
+       (let ((cont t))
+	 (loop while cont do
+	      (setf cont (funcall fn 1 nil)))))
   (cmd call-n-times ((fun fn) (int n)) ()
-       (loop for i from 0 to (1- n) do (funcall fn 0))))
+       (loop for i from 0 to (1- n) do (funcall fn 0 nil))))
 
 (defvar stack nil)
 (defvar restore-stack nil)
@@ -378,6 +455,7 @@
   (is-subset-of (subseq longer 0 (length longer)) shorter))
 
 (defun do-decode (possible-commands types)
+;  (print "START")
 ;  (print possible-commands)
 ;  (print types)
   (assert possible-commands)
@@ -387,6 +465,7 @@
 ;	    (print (list (assoc x *command-info*) (is-prefix (cadr (assoc x *command-info*)) types)))
 	    (is-prefix (cadr (assoc x *command-info*)) types))
 	  (cdr possible-commands))))
+;    (print possible)
     (assert (<= (length possible) 1))
     (car possible)))
 
@@ -400,7 +479,7 @@
 	 (restore-stack '()))
      (labels ,*commands*
        ,(cons 'progn (create-defuns (parse-and-split commands)))
-       (funcall #'fn1 0)
+       (funcall #'fn1 0 nil)
        stack)))
 
 ;; Turns the compressed input program to a set of defuns referencing each other.
@@ -430,6 +509,9 @@
     (helper program)
     defuns))
 
+(defvar *c1* 0)
+(defvar *c2* 0)
+
 ;; Wraps everything with the lisp defuns so everything actually runs
 (defun create-defuns (defuns)
   (mapcar
@@ -442,16 +524,18 @@
 	    (push (cadr (car body)) block-kinds)
 	    (setf body (cdr body)))
        `(let ((first t))
-	  (defun ,fnid (nret &rest args)
+	  (defun ,fnid (nret args)
 	    (if first
 		(let* ((fn-body (uncompress-body ',fnid ',block-kinds ',body (append args stack)))
 		       (fn-lambda (eval (list 'labels *commands* fn-body))))
 		  (setf first nil)
-		  (print (list ',fnid fn-body))
-		  (defun ,(with-under fnid) (args)
-		    (apply fn-lambda args))
-		  (apply fn-lambda (cons nret args)))
-		(,(with-under fnid) (cons nret args)))))))
+		  (setf (symbol-function ',fnid) fn-lambda)
+;		  (print (list 'setf (list 'symbol-function ',fnid) fn-body))
+		  (setf (symbol-function ',(with-under fnid)) fn-lambda)
+		  (funcall fn-lambda nret args))
+		(progn
+		  (incf *c2*)
+		  (,(with-under fnid) nret args)))))))
    defuns))
 
 ;; Returns a lambda which runs the full program given by the input
@@ -462,7 +546,8 @@
 	 (lambda-part nil)
 	 (defun-part nil))
     (setf lambda-part
-	  `(lambda (nret &rest args)
+	  `(lambda (nret args)
+	     (incf *c1*)
 	     ,@(if (member '*restoring block-kinds)
 		   '((push stack restore-stack)))
 	     (setq stack (append args stack))
@@ -552,7 +637,21 @@
 
 ;(time (loop for i across (caar (run '(8 range permutations (with-index force dup (*exploding *restoring unrot (*exploding *restoring arg-c arg-a eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map force all) map force all) map force))) count i))
 
-(run '(4 range permutations (with-index force dup (*exploding *restoring unrot (*exploding *restoring arg-c arg-a eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map force all) map force all) map force))
+;(run '(4 range permutations (with-index force dup (*exploding *restoring unrot (*exploding *restoring arg-c arg-a eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map force all) map force all) map force))
+
+(print 
+  [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) reduce force])
+
+; d c abs(a-c) 0=abs(a-c) arg-b
+
+; TODO this shouldn't break ...
+; after a non-stack-restoring block, have to find some way of always
+; re-evaluating what's on the stack. This means any builtin that takes
+; a function as an argument. map, fold, anything.
+;(run '(5 range ((1) call add) map force))
+;(run '(5 range ((1 add) call) map force))
+
+;(run '(5 range (1 add) map force))
 
 ;(progn
 ;  (time (run '(8 range permutations (with-index force dup (*exploding *restoring) map force) map force)))   nil)

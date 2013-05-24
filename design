@@ -16,6 +16,9 @@ Stack snapshots.
     Registers D-E-F give the one before
     Snapshot can be restored to a specific state when commanded so
 
+Block kinds:
+    Imploding block takes argument, n, and implodes stak by N and THEN saves argument context.
+
 
 ---
 Functions
@@ -26,6 +29,10 @@ int-and-add: string->int->int or string->string->int; cast both to int, add
 group-together: list->list; [(a,b),(a,c),(b,d),(c,e),(c,f)]->[(a,(a,c)),(b,d),(c,(e,f))]
 
 type-unaware-equals: Coerce as good as possible and comapre types.
+
+halve: x -> x/2? double?
+
+is-positive?
 
 
 ---
@@ -51,10 +58,14 @@ Code Compression
 
 Checking "is high bit 1" isn't enough for compressed-mode.
 
+Start block by encoding length of the block (in bits). Then, for each block,
+encode the function:
+
 1. Filter all available functions by those which match the types on the stack.
 2. Weight each function by how valuable it is.
 3. Compute, using the function weights, the arithmetic encoding of each.
 
+It doesn't make sense to run some functions in non-stack-restoring mode (e.g., do-while, ite).
 
 ---
 Random
