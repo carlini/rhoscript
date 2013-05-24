@@ -17,7 +17,6 @@ Stack snapshots.
     Snapshot can be restored to a specific state when commanded so
 
 
-
 ---
 Functions
 ---
@@ -27,6 +26,35 @@ int-and-add: string->int->int or string->string->int; cast both to int, add
 group-together: list->list; [(a,b),(a,c),(b,d),(c,e),(c,f)]->[(a,(a,c)),(b,d),(c,(e,f))]
 
 type-unaware-equals: Coerce as good as possible and comapre types.
+
+
+---
+Automatic Compression
+---
+
+Missing open or close parens should be fixed automatically with the same one.
+
+A function on the top of the stack at the end should be called with map.
+
+Current: static binding of character -> [function], select by type
+Better: Depending on types on stack, map character -> function.
+    This saves space when only ~10 possible functions to call matching fun->fun->list.
+
+Arithmetic encoding?
+
+Type functions on the stack? Map and reduce could be on the same word.
+
+
+---
+Code Compression
+---
+
+Checking "is high bit 1" isn't enough for compressed-mode.
+
+1. Filter all available functions by those which match the types on the stack.
+2. Weight each function by how valuable it is.
+3. Compute, using the function weights, the arithmetic encoding of each.
+
 
 ---
 Random
