@@ -9,6 +9,7 @@
 (set-macro-character #\] (get-macro-character #\)))
 (set-macro-character #\[
 		     (lambda (stream char)
+		       (declare (ignore char))
 		       `(run ',(read-delimited-list #\] stream t))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -273,7 +274,7 @@
        (list-to-list-iter l
 	 (next
 	  (vector-push-extend (funcall fn 1 (list each)) result))))
-  (cmd reduce ((fun fn) (list l)) (list)
+  (cmd filter ((fun fn) (list l)) (list)
        (list-to-list-iter l
 	 (next
 	  (if (funcall fn 1 (list each))
@@ -296,7 +297,7 @@
 	     (if (or (eq e1 null-symbol) (eq e2 null-symbol))
 		 nil
 		 (progn
-		   (vector-push-extend (to-array (list e1 e2)) result)
+		   (vector-push-extend (list (to-array (list e1 e2))) result)
 		   (incf i))))))))
   (cmd fold ((fun fn) (type init) (list l)) (type)
        (with-forced l list
@@ -387,42 +388,6 @@
 (defvar argument-restore-stack nil)
 
 (defvar *bindings* nil)
-
-(defun compress-code (input)
-  (make-commands)
-  (let ((buckets (loop for i from 0 to 70 collect nil)))
-    (labels ((fits-in (type bucket)
-	       (every 
-		(lambda (x) 
-		  (not (or (is-subset-of type (cdr x)) 
-			   (is-subset-of (cdr x) type))))
-		bucket))
-	     (add-to-first (cmd type)
-	       (let ((free (loop for b in buckets for i from 0 to (length buckets) when (fits-in type b) collect i)))
-		 (push (cons cmd type) (nth (car free) buckets)))))
-      (loop for x in *command-info* do
-	   (add-to-first (car x) (cadr x)))
-      (let* ((letters '(lower-a lower-b lower-c lower-d lower-e lower-f lower-g 
-			lower-h lower-i lower-j lower-k lower-l lower-m lower-n 
-			lower-o lower-p lower-q lower-r lower-s lower-t lower-u 
-			lower-v lower-w lower-x lower-y lower-z upper-a upper-b 
-			upper-c upper-d upper-e upper-f upper-g upper-h upper-i 
-			upper-j upper-k upper-l upper-m upper-n upper-o upper-p 
-			upper-q upper-r upper-s upper-t upper-u upper-v upper-w 
-			upper-x upper-y upper-z n0 n1 n2 n3 n4 n5 n6 n7 n8 n9 n0 
-			backtick tilde bang at hash dollar percent carrot and star 
-			lpar rpar minus underscore plus equals space tab newline 
-			semicolon colon comma period slash question quote 
-			doublequote bar backslash)))
-	(setf *bindings*
-	     (loop for i from 0 to (1- (length buckets)) append
-		  (mapcar (lambda (x) (list (car x) (nth i letters))) (nth i buckets)))))
-      (labels ((deeprepl (x)
-		 (if (listp x)
-		     (mapcar #'deeprepl x)
-		     (let ((r (cadr (assoc x *bindings*))))
-		       (if r r x)))))
-	(deeprepl input)))))
       
 (defun group-together (bindings)
   (let ((res '()))
@@ -450,26 +415,19 @@
      (is-subset-of (cdr a) (cdr b)))
     (t nil)))
 
-
 (defun is-prefix (shorter longer)
   (is-subset-of (subseq longer 0 (length longer)) shorter))
 
-(defun do-decode (possible-commands types)
-;  (print "START")
-;  (print possible-commands)
-;  (print types)
-  (assert possible-commands)
-  (let ((possible 
-	 (remove-if-not
-	  (lambda (x)
-;	    (print (list (assoc x *command-info*) (is-prefix (cadr (assoc x *command-info*)) types)))
-	    (is-prefix (cadr (assoc x *command-info*)) types))
-	  (cdr possible-commands))))
-;    (print possible)
-    (assert (<= (length possible) 1))
-    (car possible)))
-
-(defun do-compile (commands)
+(defun do-decode (command-abbrv types)
+  (if (member 'type types) nil
+      (let* ((possible-commands 
+	      (mapcar #'car 
+		      (remove-if-not 
+		       (lambda (x) (is-subset-of types (cadr x))) *command-info*)))
+	     (as-str (symbol-name command-abbrv))
+	     (index (parse-integer (subseq as-str (1+ (position #\- as-str)) (length as-str)))))
+	(nth index possible-commands))))
+(defun run-compiled (commands)
   (setf stack nil)
   (setf restore-stack nil)
   (setf argument-restore-stack nil)
@@ -526,7 +484,8 @@
        `(let ((first t))
 	  (defun ,fnid (nret args)
 	    (if first
-		(let* ((fn-body (uncompress-body ',fnid ',block-kinds ',body (append args stack)))
+		(let* ((fn-body (uncompress-body ',fnid ',block-kinds ',body 
+						 (append args stack) #'decompress))
 		       (fn-lambda (eval (list 'labels *commands* fn-body))))
 		  (setf first nil)
 		  (setf (symbol-function ',fnid) fn-lambda)
@@ -538,14 +497,105 @@
 		  (,(with-under fnid) nret args)))))))
    defuns))
 
+(defun decompress (input types inverse-bindings fnid) 
+  (declare (ignore input types inverse-bindings fnid))
+  (assert nil))
+
+(defvar *compiled-code* nil)
+
+(defun do-encode (real-command types)
+  (let ((possible-commands 
+	 (mapcar #'car 
+		 (remove-if-not 
+		  (lambda (x) (is-subset-of types (cadr x))) *command-info*))))
+;    (format t "~%TAKING ~a BITS" (log (length possible-commands)))
+    (position real-command possible-commands)))
+
+(defun commands-to-commands (input types inverse-bindings fnid)
+  (declare (ignore inverse-bindings))
+  (let ((new-name (intern (concatenate 'string
+				       (symbol-name fnid) "P"))))
+    (if (eq (caar input) 'builtin)
+	(progn
+;	  (print (list (car input)
+;		       (cadr (nth (- (length input) 2) input))
+;		       (cadr (nth (- (length input) 1) input))
+;		       (do-encode (cadr (car input)) types)))
+
+	  (push (list 
+		 (cadr (nth (- (length input) 2) input))
+		 (cadr (nth (- (length input) 1) input))
+		 (do-encode (cadr (car input)) types))
+		*compiled-code*)))
+    (incf (cadr (nth (- (length input) 1) input)))
+    (if (cdddr input)
+	(cons (list (car input)
+		    `(fun ,new-name)
+		    '(builtin call))
+	      (car (create-defuns
+		    (list (list new-name (cons '(builtin *no-arguments)
+					       (cdr input)))))))
+	(list (list (car input))))))
+
+(defun compressed-to-commands (input types inverse-bindings fnid)
+  (let ((commands nil)
+	(cont t)
+	(defun-part nil))
+    (loop for cmd in input for i from 0 to (length input) while cont do
+	 (case (car cmd)
+	   (int
+	    (push 'int types)
+	    (push cmd commands))
+	   (fun
+	    (push 'fun types)
+	    (push cmd commands))
+	   (list
+	    (push 'list types)
+	    (push cmd commands))
+	   (builtin
+	    (let* ((decoded (do-decode (cadr cmd) types))
+		   (full (assoc decoded *command-info*))
+		   (args (cadr full))
+		   (results (caddr full)))
+	      (if decoded
+		  (case decoded
+		    (dup
+		     (push (car types) types)
+		     (push '(builtin dup) commands))
+		    (swap
+		     (let ((a (pop types)) (b (pop types)))
+		       (push a types)
+		       (push b types))
+		     (push '(builtin swap) commands))
+		    (otherwise
+		     (dotimes (i (length args)) (pop types))
+		     (setf types (append results types))
+		     (push (list 'builtin decoded) commands)))
+		  (progn
+		    (assert (not (= i 0)))
+		    (let ((new-name (intern (concatenate 'string 
+							 (symbol-name fnid) "P"))))
+		      (setf cont nil)
+		      (push (list 'fun new-name) commands)
+		      (push '(builtin call) commands)
+		      (setf defun-part 
+			    (car 
+			     (create-defuns 
+			      (list (list new-name (cons '(builtin *no-arguments)
+							 (subseq input i)))))))
+		      )))))))
+    (cons (reverse commands)
+	  defun-part)))
+
 ;; Returns a lambda which runs the full program given by the input
-(defun uncompress-body (fnid block-kinds input stack)
+(defun uncompress-body (fnid block-kinds input stack decompressor)
 ;  (if (not (eq fnid 'fn1)) (push '*restoring block-kinds))
   (let* ((types (mapcar #'typeof stack))
  	 (inverse-bindings (group-together (mapcar #'reverse *bindings*)))
-	 (lambda-part nil)
-	 (defun-part nil))
-    (setf lambda-part
+	 (uncompressed-code (funcall decompressor input types inverse-bindings fnid))
+	 (lambda-part (ir-to-lisp (car uncompressed-code)))
+	 (defun-part (cdr uncompressed-code))
+	 (final-part
 	  `(lambda (nret args)
 	     (incf *c1*)
 	     ,@(if (member '*restoring block-kinds)
@@ -557,60 +607,8 @@
 			    (push x stack)))))
 	     ,@(if (not (member '*no-arguments block-kinds))
 		   '((push stack argument-restore-stack)))
-	     ,@(ir-to-lisp
-		(let ((commands nil)
-		      (cont t))
-;		  (print "LOOP TIME")
-		  (loop for cmd in input for i from 0 to (length input) while cont do
-;		       (print "ITERATION")
-;		       (print cmd)
-;		       (print types)
-		       (case (car cmd)
-			 (int
-			  (push 'int types)
-			  (push cmd commands))
-			 (fun
-			  (push 'fun types)
-			  (push cmd commands))
-			 (list
-			  (push 'list types)
-			  (push cmd commands))
-			 (builtin
-			  (let* ((decoded (do-decode (assoc (cadr cmd) inverse-bindings) types))
-				 (full (assoc decoded *command-info*))
-				 (args (cadr full))
-				 (results (caddr full)))
-;			    (print "DECODED")
-;			    (print decoded)
-			    (if decoded
-				(case decoded
-				  (dup
-				   (push (car types) types)
-				   (push '(builtin dup) commands))
-				  (swap
-				   (let ((a (pop types)) (b (pop types)))
-				     (push a types)
-				     (push b types))
-				   (push '(builtin swap) commands))
-				  (otherwise
-				   (dotimes (i (length args)) (pop types))
-				   (setf types (append results types))
-				   (push (list 'builtin decoded) commands)))
-				(progn
-				  (let ((new-name (intern (concatenate 'string 
-								       (symbol-name fnid) "P"))))
-				    (setf cont nil)
-				    (push (list 'fun new-name) commands)
-				    (push '(builtin call) commands)
-				    (setf defun-part 
-					  (car 
-					   (create-defuns 
-					    (list (list new-name (cons '(builtin *no-arguments)
-								       (subseq input i)))))))
-;				    (print "DO ABORT CODE")
-				    )))))))
-;		  (print `(and we know that i is ,i with up to ,(length input)))
-		  (reverse commands)))
+
+	     ,@lambda-part
 
 	     (let ((answer 
 		    (case nret
@@ -622,25 +620,79 @@
 		     '((pop argument-restore-stack)))
 	       ,@(if (member '*restoring block-kinds)
 		     '((setf stack (pop restore-stack))))
-	       answer)))
-;    (print defun-part)
+	       answer))))
     (if defun-part
 	`(progn
 	   ,defun-part
-	   ,lambda-part)
-	lambda-part)))
+	   ,final-part)
+	final-part)))
 
-(defun run (text)
-  (eval (do-compile (compress-code text))))
-(defun rrun (text)
-  (print (do-compile (compress-code text))))
+(defun compile-by-running (input)
+  (let ((id 0))
+    (labels ((tag-input (in)
+	       (if (listp in)
+		   (append (mapcar #'tag-input in)
+			   (list (intern (concatenate 'string 
+						      "COMPILE-TAG-" 
+						      (write-to-string (incf id))))
+				 0))
+		   in))
+	     (do-replace (tagged replace-with)
+	       (if (listp tagged)
+		   (let ((kind (nth (- (length tagged) 2) tagged))
+			 (new-tagged (mapcar (lambda (x) (do-replace x replace-with)) tagged))
+;			 (new-tagged tagged)
+			 (skip 0))
+		     (loop for elt in new-tagged while
+			  (and (eq (type-of elt) 'symbol)
+			       (eq (char (symbol-name elt) 0) #\*)) do
+;			  (print "think about *")
+;			  (print elt)
+			  (incf skip))
+
+		     (loop for elt in replace-with if (eq (car elt) kind) do
+;			  (print "DO A REPLACE")
+;			  (print elt)
+;			  (print (nth (+ (cadr elt) skip) new-tagged))
+			  (setf (nth (+ (cadr elt) skip) new-tagged) 
+				(intern (concatenate 'string "BUILTIN-" (write-to-string (caddr elt))))))
+;		     (print "TAGGED IS THIS")
+;		     (print new-tagged)
+		     new-tagged)
+		   tagged))
+	     (drop-last (tree)
+	       (if (listp tree)
+		   (mapcar #'drop-last (subseq tree 0 (- (length tree) 2)))
+		   tree)))
+      (let* ((tagged (tag-input input))
+	     (*compiled-code* nil))
+	(setf (symbol-function 'decompress) #'commands-to-commands)
+	(print tagged)
+	(eval (run-compiled tagged))
+	(print (drop-last (do-replace tagged *compiled-code*)))))))
+
+(defun run (i) 
+  (let ((compiled (compile-by-running i)))
+    (print compiled)
+    (setf (symbol-function 'decompress) #'compressed-to-commands)
+    (eval (run-compiled compiled))))
+
+
+;(defun run (text)
+;  (eval (run-compiled (compile-by-running text))))
 
 ;(time (loop for i across (caar (run '(8 range permutations (with-index force dup (*exploding *restoring unrot (*exploding *restoring arg-c arg-a eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map force all) map force all) map force))) count i))
 
 ;(run '(4 range permutations (with-index force dup (*exploding *restoring unrot (*exploding *restoring arg-c arg-a eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map force all) map force all) map force))
 
-(print 
-  [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) reduce force])
+;(time
+;  [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length])
+
+;(time
+; [5 range 0 (add) fold])
+
+;(time
+; [1 2 3 add])
 
 ; d c abs(a-c) 0=abs(a-c) arg-b
 
