@@ -34,6 +34,8 @@
 			 (symbol-name x))))
   (defun with-under (x) (with-char x "_"))
   (defun ir-to-lisp (input)
+    (let ((defuns nil))
+      (cons
     (mapcar
      (lambda (decoded)
        (case (car decoded)
@@ -41,6 +43,12 @@
 	  `(push ,(cadr decoded) stack))
 	 (fun
 	  `(push #',(cadr decoded) stack))
+	 (fun-as-list
+	  (let ((id (fresh-fun-name)))
+	    (push
+	     (car (create-defuns (list (cons id (list (cadr decoded))))))
+	     defuns)
+	  `(push #',id stack)))
 	 (list
 	  `(push '(,(cadr decoded)) stack))
 	 (builtin
@@ -55,7 +63,8 @@
 		 `(push ,the-command stack))
 		(t
 		 `(setq stack (append ,the-command stack)))))))))
-     input))
+     input)
+    defuns)))
 
   (defun real-commands (body)
     (setf *full-commands* body)
@@ -388,14 +397,6 @@
 (defvar argument-restore-stack nil)
 
 (defvar *bindings* nil)
-      
-;(defun group-together (bindings)
-;  (let ((res '()))
-;    (loop for item in bindings do
-;	 (if (not (assoc (car item) res))
-;	     (push item res)
-;	     (push (cadr item) (cdr (assoc (car item) res)))))
-;    res))
 
 (defun typeof (el)
   (cond
@@ -425,7 +426,7 @@
 	(fnid 0))
     (labels ((helper (input)
 	       (incf fnid)
-	       (let ((myid (intern (concatenate 'string "FN" (write-to-string fnid)))))
+	       (let ((myid (intern (concatenate 'string "FN-" (write-to-string fnid)))))
 		 (push
 		  (list
 		   myid
@@ -442,6 +443,10 @@
 
 (defvar *c1* 0)
 (defvar *c2* 0)
+(defvar fun-count 0)
+
+(defun fresh-fun-name ()
+  (intern (concatenate 'string "DYN-FN-" (write-to-string (incf fun-count)))))
 
 ;; Wraps everything with the lisp defuns so everything actually runs
 (defun create-defuns (defuns)
@@ -521,28 +526,52 @@
 ;	(format t "~%Decoded ~a to ~a" command-abbrv (nth command-abbrv possible-commands))
 	(nth (car command-abbrv) possible-commands))))
 
+(defun extract-next-token (input types)
+  (let* ((not-yet-decoded (cdar (last input)))
+	 (next-token (car (car not-yet-decoded))))
+    (if (eq (car next-token) 'fun-start)
+	(list 'fun-as-list 
+	      (list (list 'decode-me 
+			  (cdr (loop for i from 1 to (cadr next-token) collect 
+				    (pop (car not-yet-decoded)))))))
+	(if (eq (car next-token) 'builtin)
+	    (let ((cmd (do-decode (cadr next-token) types)))
+	      (when cmd
+		(pop (car not-yet-decoded))
+		(list 'builtin cmd)))
+	    (pop (car not-yet-decoded))))))
+
+(defun remaining-work (input)
+  (when (cadr (car (last input)))
+    (format t "We have some work left to do ~a.~%" input)
+    input))
+
 (defun compressed-to-commands (input types fnid)
   (let ((commands nil)
 	(cont t)
 	(defun-part nil))
-    (loop for cmd in input for i from 0 to (length input) while cont do
-	 (case (car cmd)
-	   (int
-	    (push 'int types)
-	    (push cmd commands))
-	   (fun
-	    (push 'fun types)
-	    (push cmd commands))
-	   (list
-	    (push 'list types)
-	    (push cmd commands))
-	   (builtin
-	    (let* ((decoded (do-decode (cadr cmd) types))
-		   (full (assoc decoded *command-info*))
-		   (args (cadr full))
-		   (results (caddr full)))
-	      (if (and decoded (not (member 'abort types)))
-		  (case decoded
+    (loop while cont do
+	 (let ((cmd (extract-next-token input types)))
+	   (if cmd
+	       (case (car cmd)
+		 (int
+		  (push 'int types)
+		  (push cmd commands))
+		 (fun
+		  (push 'fun types)
+		  (push cmd commands))
+		 (fun-as-list
+		  (push 'fun types)
+		  (push cmd commands))
+		 (list
+		  (push 'list types)
+		  (push cmd commands))
+		 (builtin
+		  (let* ((decoded (cadr cmd))
+			 (full (assoc decoded *command-info*))
+			 (args (cadr full))
+			 (results (caddr full)))
+		  (case (cadr cmd)
 		    (dup
 		     (push (car types) types)
 		     (push '(builtin dup) commands))
@@ -555,26 +584,74 @@
 		     (if (member 'fun (loop for i from 1 to (length args) collect (pop types)))
 			 (push 'abort types)
 			 (setf types (append results types)))
-		     (push (list 'builtin decoded) commands)))
-		  (progn
-		    (assert (not (= i 0)))
-		    (let ((new-name (intern (concatenate 'string 
-							 (symbol-name fnid) "P"))))
-		      (setf cont nil)
-		      (push (list 'fun new-name) commands)
-		      (push '(builtin call) commands)
-		      (setf defun-part 
-			    (car 
-			     (create-defuns 
-			      (list (list new-name (cons '(fun-modifier *no-arguments)
-							 (subseq input i)))))))
-		      )))))))
+		     (push (list 'builtin decoded) commands))))))
+	       (if (remaining-work input)
+		 (let ((new-name (intern (concatenate 'string 
+						      (symbol-name fnid) "P"))))
+		   (setf cont nil)
+		   (push (list 'fun new-name) commands)
+		   (push '(builtin call) commands)
+		   (setf defun-part 
+			 (car 
+			  (create-defuns 
+			   (list (list new-name (cons '(fun-modifier *no-arguments)
+						      (remaining-work input))))))))
+		   (setf cont nil)))))
     (cons (reverse commands)
 	  defun-part)))
+		   
+		  
+
+    ;; (loop for cmd in input for i from 0 to (length input) while cont do
+    ;; 	 (case (car cmd)
+    ;; 	   (int
+    ;; 	    (push 'int types)
+    ;; 	    (push cmd commands))
+    ;; 	   (fun
+    ;; 	    (push 'fun types)
+    ;; 	    (push cmd commands))
+    ;; 	   (list
+    ;; 	    (push 'list types)
+    ;; 	    (push cmd commands))
+    ;; 	   (builtin
+    ;; 	    (let* ((decoded (do-decode (cadr cmd) types))
+    ;; 		   (full (assoc decoded *command-info*))
+    ;; 		   (args (cadr full))
+    ;; 		   (results (caddr full)))
+    ;; 	      (if (and decoded (not (member 'abort types)))
+    ;; 		  (case decoded
+    ;; 		    (dup
+    ;; 		     (push (car types) types)
+    ;; 		     (push '(builtin dup) commands))
+    ;; 		    (swap
+    ;; 		     (let ((a (pop types)) (b (pop types)))
+    ;; 		       (push a types)
+    ;; 		       (push b types))
+    ;; 		     (push '(builtin swap) commands))
+    ;; 		    (otherwise
+    ;; 		     (if (member 'fun (loop for i from 1 to (length args) collect (pop types)))
+    ;; 			 (push 'abort types)
+    ;; 			 (setf types (append results types)))
+    ;; 		     (push (list 'builtin decoded) commands)))
+    ;; 		  (progn
+    ;; 		    (assert (not (= i 0)))
+    ;; 		    (let ((new-name (intern (concatenate 'string 
+    ;; 							 (symbol-name fnid) "P"))))
+    ;; 		      (setf cont nil)
+    ;; 		      (push (list 'fun new-name) commands)
+    ;; 		      (push '(builtin call) commands)
+    ;; 		      (setf defun-part 
+    ;; 			    (car 
+    ;; 			     (create-defuns 
+    ;; 			      (list (list new-name (cons '(fun-modifier *no-arguments)
+    ;; 							 (subseq input i)))))))
+    ;; 		      )))))))
+    ;; (cons (reverse commands)
+    ;; 	  defun-part)))
 
 ;; Returns a lambda which runs the full program given by the input
 (defun uncompress-body (fnid block-kinds input stack decompressor)
-;  (if (not (eq fnid 'fn1)) (push '*restoring block-kinds))
+;  (if (not (eq fnid 'fn-1)) (push '*restoring block-kinds))
   (if (member '*exploding block-kinds)
       (with-forced (pop stack) list 
 	(loop for x across (reverse list) do
@@ -586,8 +663,10 @@
   (let* ((types (mapcar #'typeof stack))
 ; 	 (inverse-bindings (group-together (mapcar #'reverse *bindings*)))
 	 (uncompressed-code (funcall decompressor input types fnid))
-	 (lambda-part (ir-to-lisp (car uncompressed-code)))
 	 (defun-part (cdr uncompressed-code))
+	 (ir-part (ir-to-lisp (car uncompressed-code)))
+	 (lambda-part (car ir-part))
+	 (defun-part-2 (cdr ir-part))
 	 (final-part
 	  `(lambda (nret args)
 	     (incf *c1*)
@@ -614,9 +693,10 @@
 	       ,@(if (member '*restoring block-kinds)
 		     '((setf stack (pop restore-stack))))
 	       answer))))
-    (if defun-part
+    (if (append defun-part defun-part-2)
 	`(progn
 	   ,defun-part
+	   ,@defun-part-2
 	   ,final-part)
 	final-part)))
 
@@ -630,31 +710,36 @@
 	 (restore-stack '()))
      (labels ,*commands*
        ,(cons 'progn (create-defuns (parse-and-split commands)))
-       (funcall #'fn1 0 nil)
+       (funcall #'fn-1 0 nil)
        stack)))
 
 (defun list-to-bytes (list)
   (print list)
   (labels ((make-flat (tree)
 	     (if (eq (car tree) 'fun)
-		 (cons (list 'fun-start (length (cadr tree)))
+		 (cons (list 'fun-start (deep-length tree))
 			(reduce #'append (mapcar #'make-flat (cadr tree))))
-		 (list tree))))
+		 (list tree)))
+	   (deep-length (tree)
+	     (if (eq (car tree) 'fun)
+		 (1+ (reduce #'+ (mapcar #'deep-length (cadr tree))))
+		 1)))
     (make-flat list)))
 
 (defun bytes-to-list (bytes)
   (assert (eq (caar bytes) 'fun-start))
-  (let ((count (cadr (pop bytes)))
-	(result (list)))
-    (loop while (> count 0) do
-	 (let ((elt (car bytes)))
-	   (if (eq (car elt) 'fun-start)
-	       (let ((res (bytes-to-list bytes)))
-		 (setf bytes (car res))
-		 (push (cdr res) result))
-	       (push (pop bytes) result))
-	   (decf count)))
-    (cons bytes (list 'fun (reverse result)))))
+  ;; (let ((count (cadr (pop bytes)))
+  ;; 	(result (list)))
+  ;;   (loop while (> count 0) do
+  ;; 	 (let ((elt (car bytes)))
+  ;; 	   (if (eq (car elt) 'fun-start)
+  ;; 	       (let ((res (bytes-to-list bytes)))
+  ;; 		 (setf bytes (car res))
+  ;; 		 (push (cdr res) result))
+  ;; 	       (push (pop bytes) result))
+  ;; 	   (decf count)))
+  ;;   (cons bytes (list 'fun (reverse result)))))
+  (list 'fun (list (list 'decode-me (cdr bytes)))))
 
 (defun add-types-to-user-input (input)
   (if (listp input)
@@ -724,10 +809,10 @@
   (let* ((answer-and-compiled (compile-by-running i))
 	 (answer (car answer-and-compiled))
 	 (compiled (cdr answer-and-compiled)))
-    (format t "~%The compiled version is ~a~%" compiled)
+    (format t "~%The compiled version is ~a of size ~a~%" compiled (length compiled))
     (setf (symbol-function 'decompress) #'compressed-to-commands)
 ;    ))
-    (let ((run-answer (eval (run-compiled (cdr (bytes-to-list compiled))))))
+    (let ((run-answer (eval (run-compiled (bytes-to-list compiled)))))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
       (assert (equalp answer run-answer))
       run-answer)))
@@ -744,12 +829,12 @@
 ;(time
 ;  [6 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length])
 
-(time [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length])
+;(time [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length])
 ;(time
 ; [5 range 0 (add) fold])
 
-;(time
-; [1 2 3 add])
+(time
+ [3 (2 (4) call-n-times) call-n-times])
 
 ; d c abs(a-c) 0=abs(a-c) arg-b
 
