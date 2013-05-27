@@ -51,6 +51,8 @@ Arithmetic encoding?
 
 Type functions on the stack? Map and reduce could be on the same word.
 
+It doesn't make sense to call "dup swap", or "* drop" where "*" freshly pushes a new value.
+
 
 ---
 Code Compression
@@ -66,6 +68,12 @@ encode the function:
 3. Compute, using the function weights, the arithmetic encoding of each.
 
 It doesn't make sense to run some functions in non-stack-restoring mode (e.g., do-while, ite).
+
+---
+IO
+---
+Smart parsing and dumping:
+ - The empty program must be the identity operator.
 
 ---
 Random
