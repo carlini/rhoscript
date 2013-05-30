@@ -78,3 +78,6 @@ Smart parsing and dumping:
 ---
 Random
 ---
+
+When a function is not stack restoring, it should be forced right away. 
+Otherwise, we won't know the right types. It'll also be very strange to ever want it delayed.

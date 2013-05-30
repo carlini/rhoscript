@@ -13,7 +13,16 @@
 	   (print `(got ,it expected ,,answer))
 	   (print "-------")
 	   (assert nil)))))
-	 
+
+(test "Push a number" 3
+  3)
+
+(test "Equality" t
+  3 3 eq)
+
+(test "Inequality" t
+  3 4 neq)
+
 (test "Add" 5
   2 3 add)
 
@@ -23,14 +32,23 @@
 (test "Divide" 4
   8 2 divide)
 
+(test "Mod" 7
+  107 10 mod)
+
 (test "Stack" 1
   2 4 swap divide 3 4 unrot rot rot add swap subtract 2 drop)
 
 (test "Call" 5
   2 (3) call ((add) call) call)
 
+(test "Select Args 1" 5
+  1 2 3 4 (arg-a arg-d add) call)
+
 (test "Range" 10
   5 range sum)
+
+(test "Implode" 10
+  1 2 3 4 4 implode sum)
 
 (test "Map sum" 15
   5 range (1 add) map sum)
@@ -62,11 +80,20 @@
 (test "Reduce" 10
   5 range 0 (add) fold)
 
-(test "Exploding" 3
+(test "Explode 1" 3
+  2 range (1 add) map (explode add) call)
+
+(test "Explode 2" '(#(0 2 4 6))
+  4 range dup zip (explode add) map force)
+
+(test "Exploding 1" 3
   2 range (1 add) map (*exploding add) call)
 
-(test "Exploding" '(#(0 2 4 6))
+(test "Exploding 2" '(#(0 2 4 6))
   4 range dup zip (*exploding add) map force)
+
+(test "Transpose" '(#(6 3))
+ 3 range dup (1 add) map zip transpose (sum) map force)
 
 (test "Zip" '(#(10 10 10 10 10 10))
   5 range prefixes force 5 range suffixes force zip (*exploding concatenate) map (sum) map force)
@@ -74,5 +101,8 @@
 (test "Blocks can mess with stack" '(#(1 2 3 4 5))
   5 range ((1) call add) map force)
 
-;(test "Prefixes + Suffixes" 10
-;  5 range dup prefixes force swap suffixes)
+(test "Five queens 1" 10
+  5 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length)
+
+(test "Five queens 2" 10
+  5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter force length)
