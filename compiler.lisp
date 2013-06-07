@@ -50,47 +50,9 @@
 			 (symbol-name x))))
   (defun with-under (x) (with-char x "_"))
 
-  ;; Convert the IR to some actual lisp code.
-  ;; The input is a flat list of tagged data, and the output is a pair:
-  ;;   - car: a list of lisp code that can be placed in a progn block
-  ;;   - cdr: a list of new functions to define before running the body
-  (defun ir-to-lisp (input)
-    (let ((defuns nil))
-      (cons
-       (mapcar
-	(lambda (decoded)
-	  (case (car decoded)
-	    (int
-	     `(push ,(cadr decoded) stack))
-	    (fun
-	     `(push #',(cadr decoded) stack))
-	    (fun-as-list
-	     (let ((id (fresh-fun-name)))
-	       (push
-		(car (create-defuns (list (cons id (list (cadr decoded)))) (caddr decoded))) 
-		defuns)
-	       `(push #',id stack)))
-	    (list
-	     `(push '(,(cadr decoded)) stack))
-	    (builtin
-	     (let* ((full (assoc (cadr decoded) *command-info*))
-		    (args (cadr full))
-		    (results (caddr full)))
-	       (let ((the-command `(,(with-under (cadr decoded)) ,@(n-times (length args) '(pop stack)))))
-		 (cond
-		   ((= (length results) 0)
-		    the-command)
-		   ((= (length results) 1)
-		    `(push ,the-command stack))
-		   (t
-		    `(setq stack (append ,the-command stack)))))))))
-	input)
-       defuns)))
-
   ;; The handler for the commands macro. Creates the *commands* and
   ;; the *commands-info* lists with the correct information.
   (defun real-commands (body)
-    (setf *full-commands* body)
     (labels ((gen-cmd (kind name args res cmd)
 	       (declare (ignore res))
 	       (case kind
@@ -108,6 +70,7 @@
 	       (loop for i from 4 while (symbolp (nth i x)) collect (nth i x))))
       
       `(defun make-commands ()
+	 (setf *full-commands* ',body)
 	 (setf *commands*
 	       ',(mapcar
 		  (lambda (x) 
@@ -146,44 +109,73 @@
 	      (funcall (cdr ,name)))
 	 ,@run))))
 
-;; A macro which creates a new list based off of a previous list.
+;; A macro to create a new list.
 ;; There are three cases:
 ;;   - initially: code to run before the iteration.
 ;;   - next: how to handle each element of the original list.
 ;;   - finally: code to run after the end of the list.
-(defmacro list-to-list-iter (list-name &body body)
-  `(let* ((result (new-array))
-	  (index 0)
-	  (cons-cell (cons result nil)))
-     ,@(if (assoc 'initially body)
-	   (cdr (assoc 'initially body)))
-     (setf (cdr cons-cell)
-	   (lambda ()
-	     (let ((each (list-get ,list-name index)))
-	       (if (eq null-symbol each)
-		   (progn
-		    ,@(if (assoc 'finally body)
-			  (cdr (assoc 'finally body)))
-		    (setf (cdr cons-cell) nil))
-		   (progn
-		    ,@(cdr (assoc 'next body))
-		    (incf index))))))
-     cons-cell))
-
-;; A macro to create a new list, with the same three cases as list-to-list-iter.
+(defmacro creating-new-listq (&body body)
+  `(let ((result (new-array))
+	 (continue t))
+     ,@(cdr (assoc 'initially body))
+     (loop while continue do
+	  (if (not (progn ,@(cdr (assoc 'next body))))
+	      (setf continue nil)))
+     ,@(cdr (assoc 'finally body))
+     (list result)))
 (defmacro creating-new-list (&body body)
   `(let* ((result (new-array))
-	  (cons-cell (cons result nil)))
+  	  (cons-cell (cons result nil)))
      ,@(if (assoc 'initially body)
-	   (cdr (assoc 'initially body)))
+  	   (cdr (assoc 'initially body)))
      (setf (cdr cons-cell)
-	   (lambda ()
-	     (if (not (progn ,@(cdr (assoc 'next body))))
-		 (progn
-		   ,@(if (assoc 'finally body)
-			 (cdr (assoc 'finall body)))
-		   (setf (cdr cons-cell) nil)))))
+	   (let ((stack-copy stack))
+  	   (lambda ()
+	     (let ((argument-restore-stack (list stack-copy)))
+  	     (if (not (progn ,@(cdr (assoc 'next body))))
+  		 (progn
+  		   ,@(if (assoc 'finally body)
+  			 (cdr (assoc 'finall body)))
+  		   (setf (cdr cons-cell) nil)))))))
      cons-cell))
+
+;; A macro which creates a new list based off of a previous list.
+(defmacro list-to-list-iter-q (list-name &body body)
+  `(let ((result (new-array)))
+     ,@(cdr (assoc 'initially body))
+     (loop for index from 0 for each across (car ,list-name) do
+	  ,@(cdr (assoc 'next body)))
+     ,@(cdr (assoc 'finally body))
+     (list result)))
+(defmacro list-to-list-iter (list-name &body body)
+  `(let* ((result (new-array))
+  	  (index 0)
+  	  (cons-cell (cons result nil)))
+     ,@(if (assoc 'initially body)
+  	   (cdr (assoc 'initially body)))
+     (setf (cdr cons-cell)
+	   (let ((stack-copy stack))
+  	   (lambda ()
+	     (let ((argument-restore-stack (list stack-copy)))
+;	       (print "set")
+;	       (print stack)
+	       (let ((qqvvqq
+  	     (let ((each (list-get ,list-name index)))
+  	       (if (eq null-symbol each)
+  		   (progn
+  		    ,@(if (assoc 'finally body)
+  			  (cdr (assoc 'finally body)))
+  		    (setf (cdr cons-cell) nil))
+  		   (progn
+  		    ,@(cdr (assoc 'next body))
+  		    (incf index))))))
+;		 (print "unset")
+		 qqvvqq)))))
+     cons-cell))
+
+(defmacro save-arguments (&body body)
+  `(let ((argument-restore-stack (cons stack argument-restore-stack)))
+     ,@body))
 
 (commands
 ; type
@@ -203,10 +195,12 @@
        "Removes the top element of the stack."
        (declare (ignore a)))
   (cmd print () ()
-       (format t "Stack dump:~%")
-       (loop for el in stack for i from 0 do
-	    (format t "   ~a. ~a~%" i el))
-       (format t "~%"))
+       (progn
+	 (print 123123123)
+	 (print "Stack dump:~%")
+	 (loop for el in stack for i from 0 do
+	      (format t "   ~a. ~a~%" i el))
+	 (format t "~%")))
   (cmd p ((type a)) ()
        (print a))
   (cmd pp () ()
@@ -235,54 +229,102 @@
        (cadddr (car argument-restore-stack)))
 
 ; int
+  (cmd pick ((int a)) (type)
+       (nth a stack))
   (cmd or ((bool a) (bool b)) (bool)
        "Logical or of the top two elements of the stack."
        (or a b))
   (cmd and ((bool a) (bool b)) (bool)
        "Logical and of the top two elements of the stack."
        (and a b))
-  (cmd gt ((int a) (int b)) (bool)
+  (cmd gte ((int a) (int b)) (bool)
        "Checks if the first argument is larger than the second."
        (not (> a b)))
-  (cmd gte ((int a) (int b)) (bool)
+  (cmd gt ((int a) (int b)) (bool)
        "Checks if the first argument is larger than or equal to the second."
        (not (>= a b)))
   (cmd add ((int a) (int b)) (int)
+       "Adds the top two elements onf the stack."
        (+ a b))
   (cmd inc ((int a)) (int)
+       "Increments the top element of the stack."
        (+ a 1))
   (cmd dec ((int a)) (int)
+       "Decrements the top element of the stack."
        (- a 1))
   (cmd multiply ((int a) (int b)) (int)
+       "Multiplies the top two elements onf the stack."
        (* a b))
   (cmd subtract ((int a) (int b)) (int)
+       "Subtracts from the second-to-top by the top of the stak."
        (- b a))
   (cmd divide ((int a) (int b)) (int)
+       "Divides from the second-to-top by the top of the stak."
        (floor (/ b a)))
   (cmd mod ((int a) (int b)) (int)
+       "Computes the remainder of the second-to-top when divided by the top of the stak."
        (mod b a))
   (cmd abs ((int a)) (int)
+       "Computes the absolute value of the top of the stack."
        (abs a))
   (cmd even ((int a)) (bool)
+       "Tests if the top of the stack is an even number."
        (evenp a))
   (cmd odd ((int a)) (bool)
+       "Tests if the top of the stack is an odd number."
        (oddp a))
-  (cmd implode ((int i)) (list) :messy
+  (cmd gcd ((int a) (int b)) (int)
+       (let ((tmp 0))
+	 (loop while (and (> a 0) (> b 0)) do
+	      (setf tmp a)
+	      (setf a (mod b a))
+	      (setf b tmp))
+	 b))
+  (cmd implode ((int count)) (list) :messy
+       "Pops the top count elements off the stack and makes a list out of them."
        (let ((a (new-array)))
-	 (loop for j from 1 to i do
+	 (loop for j from 1 to count do
 	      (vector-push-extend (pop stack) a))
 	 (list a)))
   (cmd range ((int n)) (list)
-       "Generates a list of numbers from 0 to n."
+       "Generates a list of numbers from 0 (inclusive) to n (exclusive)."
        (let ((arr (make-array n :adjustable t)))
 	 (loop for n from 0 to (- n 1) do (setf (aref arr n) n))
 	 (list arr)))
+  (cmd range-from-1 ((int n)) (list)
+       "Generates a list of numbers from 1 (inclusive) to n (exclusive)."
+       (let ((arr (make-array n :adjustable t)))
+	 (loop for n from 1 to n do (setf (aref arr (1- n)) n))
+	 (list arr)))
   (cmd get ((int i) (list l)) (type)
+       "Indexes in to a list."
+       ; TODO negative index?
        (list-get l i))
+  (cmd substr ((int start) (int end) (list l)) (type)
+       "Indexes in to a list."
+       ; TODO negative index?
+       (let ((arr (new-array)))
+	 (loop for i from start to (1- end) do
+	      (vector-push-extend (list-get l i) arr))
+	 (list arr)))
+  (cmd combinations ((int size) (list l)) (list)
+       (with-forced l list
+	 (labels ((combine (lst sz)
+		    (if (eq sz 0)
+			(list nil)
+			(reduce #'append
+				(maplist 
+				 (lambda (x) 
+				   (mapcar (lambda (y) (cons (car x) y))
+					   (combine (cdr x) (1- sz))))
+				 lst)))))
+	   (list (to-array (mapcar (lambda (x) (list (to-array x)))
+				   (combine (coerce list 'list) size)))))))
 
 ; list
   (cmd explode ((list l)) () :messy
-       "Pushes each element of a list on to the stack; the head becomes the top."
+       "Pushes each element of a list on to the stack; the head of the list
+        becomes the top of the stack."
        (with-forced l list
 	 (loop for x across (reverse list) do
 	      (push x stack))))
@@ -301,9 +343,11 @@
        (with-forced l list
 	 (loop for el across list sum el)))
   (cmd min ((list l)) (int)
+       "Find the smallest element of a list."
        (with-forced l list
 	 (loop for el across list minimize el)))
   (cmd max ((list l)) (int)
+       "Find the largest element of a list."
        (with-forced l list
 	 (loop for el across list maximize el)))
   (cmd with-index ((list l)) (list)
@@ -312,11 +356,22 @@
 	 (next
 	  (vector-push-extend (list (to-array (list index each))) result))))
   (cmd sort ((list l)) (list)
+       "Sorts the elements of a list."
        (with-forced l list
 	 (list (sort list #'<))))
   (cmd reverse ((list l)) (list)
+       "Reverses a list."
        (with-forced l list
 	 (list (reverse list))))
+  (cmd first ((list l)) (type)
+       "Get the first element of a list."
+       (list-get l 0))
+  (cmd butfirst ((list l)) (list)
+       "Get the first element of a list."
+       (list-to-list-iter l
+	 (next
+	  (if (not (eq index 0))
+	      (vector-push-extend each result)))))
   (cmd any ((list l)) (list)
        (not (loop for i from 0 until (eq (list-get l i) null-symbol) never (list-get l i))))
   (cmd all ((list l)) (list)
@@ -420,34 +475,57 @@
 ; fun
   (cmd call ((fun f)) ()
        "Takes a function off the stack and runs it."
-       (funcall f 0 nil))
+       (save-arguments
+	(funcall f 0 nil)))
   (cmd map ((fun fn) (list l)) (list)
+       "Maps a function over a list. Each element of the new list is the function applied
+        to the old element."
        (list-to-list-iter l
-	 (next
-	  (vector-push-extend (funcall fn 1 (list each)) result))))
+	   (next
+	    (vector-push-extend (funcall fn 1 (list each)) result))))
   (cmd filter ((fun fn) (list l)) (list)
+       "Returns a new list where only elements where the function returns true are retained."
        (list-to-list-iter l
 	 (next
 	  (if (funcall fn 1 (list each))
 	      (vector-push-extend each result)))))
+  (cmd reduce ((fun fn) (list l)) (type)
+       (let ((init (list-get l 0)))
+	 (with-forced l list
+	   (loop for el across list for i from 0 if (not (eq i 0)) do
+		(setf init (funcall fn 1 (list el init))))
+	   init)))
   (cmd fold ((fun fn) (type init) (list l)) (type)
        (with-forced l list
 	 (loop for el across list do
-	      (setf init (funcall fn 1 (list init el))))
+	      (setf init (funcall fn 1 (list el init))))
 	 init))
+  (cmd uniq-by ((fun fn) (list l)) (list)
+       (let ((seen nil))
+	 (list-to-list-iter l
+	   (next
+	    (when (not (some (lambda (x) x) 
+			     (mapcar (lambda (x) (funcall fn 1 (list x each))) seen)))
+		(vector-push-extend each result)
+		(push each seen))))))
   (cmd ite ((fun a) (fun b) (bool case)) ()
-       (if case
-	   (funcall a 0 nil)
-	   (funcall b 0 nil)))
+       (save-arguments
+	(if case
+	    (funcall a 0 nil)
+	    (funcall b 0 nil))))
   (cmd if ((fun a) (bool case)) ()
-       (if case
-	   (funcall a 0 nil)))
+       (save-arguments
+	(if case
+	    (funcall a 0 nil))))
   (cmd do-while ((fun fn)) ()
-       (let ((cont t))
-	 (loop while cont do
-	      (setf cont (funcall fn 1 nil)))))
+       (save-arguments
+	(let ((cont t))
+	  (loop while cont do
+	       (setf cont (funcall fn 1 nil))))))
   (cmd call-n-times ((fun fn) (int n)) ()
-       (loop for i from 0 to (1- n) do (funcall fn 0 nil))))
+       "Runs the top function n times."
+       (save-arguments
+	(loop for i from 0 to (1- n) do (funcall fn 0 nil)))))
 
 
 ;; These are the stacks we're going to work with. They need to be
@@ -527,24 +605,35 @@
 	    (push (cadr (car body)) more-block-kinds)
 	    (setf body (cdr body)))
        `(let ((first t))
-	  (ignore-redefun
-	   (defun ,fnid (nret args)
-	     (if first
-		 (let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
-						  ',body (append args stack) #'decompress))
-			(fn-lambda (eval (list 'labels *commands* fn-body))))
-		   (setf first nil)
-		   (setf (symbol-function ',fnid) fn-lambda)
-		   (setf (symbol-function ',(with-under fnid)) fn-lambda)
-		   (funcall fn-lambda nret args))
-		 (progn
-		   (incf *c2*)
-		   (funcall #',(with-under fnid) nret args))))))))
+	  (labels ((keep-only (commands body)
+		     (let ((refed (referenced-commands body)))
+		       (remove-if-not 
+			(lambda (x)
+			  (member (car x) refed))
+			commands)))
+		   (referenced-commands (body)
+		     (if (listp body)
+			 (cons (car body) (reduce #'append 
+						  (mapcar #'referenced-commands 
+							  (cdr body)))))))
+	    (ignore-redefun
+	      (defun ,fnid (nret args)
+		(if first
+		    (let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
+						     ',body (append args stack) #'decompress))
+			   (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) fn-body))))
+		      (setf first nil)
+		      (setf (symbol-function ',fnid) fn-lambda)
+		      (setf (symbol-function ',(with-under fnid)) fn-lambda)
+		      (funcall fn-lambda nret args))
+		    (progn
+		      (incf *c2*)
+		      (funcall #',(with-under fnid) nret args)))))))))
    defuns))
 
 ;; A generic decompressor which does nothing.
 (defun decompress (input types fnid) 
-;  (declare (ignore input types fnid))
+  (declare (ignore input types fnid))
   (assert nil))
 
 ;; When we're doing the compilation run, this is where we put all of the
@@ -592,7 +681,7 @@
 	      (mapcar #'car 
 		      (remove-if-not 
 		       (lambda (x) (is-subset-of types (cadr x))) *command-info*))))
-;	(format t "~%Decoded ~a to ~a" command-abbrv (nth command-abbrv possible-commands))
+;	(format t "~%Decoded ~a to ~a" command-abbrv (nth (car command-abbrv) possible-commands))
 	(nth (car command-abbrv) possible-commands))))
 
 ;; Given the big blob of compressed data, extracts the next single token.
@@ -635,7 +724,9 @@
 	(cont t)
 	(defun-part nil))
     (loop while cont do
-	 (let ((cmd (extract-next-token input types)))
+	 (let ((cmd 
+		(if (not (member 'abort types)) 
+		    (extract-next-token input types))))
 	   (if cmd
 	       (case (car cmd)
 		 (int
@@ -686,6 +777,44 @@
     (cons (reverse commands)
 	  defun-part)))
 
+;; Convert the IR to some actual lisp code.
+;; The input is a flat list of tagged data, and the output is a pair:
+;;   - car: a list of lisp code that can be placed in a progn block
+;;   - cdr: a list of new functions to define before running the body
+(defun ir-to-lisp (input)
+  (let ((defuns nil))
+    (cons
+     (mapcar
+      (lambda (decoded)
+	(case (car decoded)
+	  (int
+	   `(push ,(cadr decoded) stack))
+	  (fun
+	   `(push #',(cadr decoded) stack))
+	  (fun-as-list
+	   (let ((id (fresh-fun-name)))
+	     (push
+	      (car (create-defuns (list (cons id (list (cadr decoded)))) (caddr decoded))) 
+	      defuns)
+	     `(push #',id stack)))
+	  (list
+	   `(push '(,(cadr decoded)) stack))
+	  (builtin
+	   (let* ((full (assoc (cadr decoded) *command-info*))
+		  (args (cadr full))
+		  (results (caddr full)))
+	     (let ((the-command `(,(with-under (cadr decoded)) ,@(n-times (length args) '(pop stack)))))
+	       (cond
+		 ((= (length results) 0)
+		  the-command)
+		 ((= (length results) 1)
+		  `(push ,the-command stack))
+		 (t
+		  `(setq stack (append ,the-command stack)))))))))
+      input)
+     defuns)))
+
+
 ;; Returns a lambda which runs the full program given by the input.
 ;; We may need to define some new functions either because ir-to-lisp
 ;; told us to, or because compressed-to-commands told us to.
@@ -719,7 +848,12 @@
 		       (loop for x across (reverse list) do
 			    (push x stack)))))
 	     ,@(if (not (member '*no-arguments block-kinds))
-		   '((push stack argument-restore-stack)))
+		   `((push (append 
+			    ,(if (member '*exploding block-kinds)
+				 `(coerce (with-forced (car args) list list) 'list)
+				 `args)
+			    (car argument-restore-stack)) argument-restore-stack))
+		   `((pop argument-restore-stack)))
 
 	     ,@lambda-part
 
@@ -733,6 +867,7 @@
 		     '((pop argument-restore-stack)))
 	       ,@(if (member '*restoring block-kinds)
 		     '((setf stack (pop restore-stack))))
+
 	       answer))))
     (if defun-part 
 	(if defun-part-2
@@ -758,12 +893,9 @@
   `(let ((stack '())
 	 (argument-restore-stack '())
 	 (restore-stack '()))
-     (labels ,*commands*
-       ,(cons 'progn (create-defuns (parse-and-split commands)))
-       (funcall #'fn-1 0 nil)
-       stack)))
-
-;(defun 
+     ,(cons 'progn (create-defuns (parse-and-split commands)))
+     (funcall #'fn-1 0 nil)
+     stack))
 
 ;; Turn a nested list of commands in to a set of bytes which are very
 ;; dense, yet still represent the same information.
@@ -781,15 +913,15 @@
 	   (deep-length (tree)
 	     (if (eq (car tree) 'fun)
 		 (1+ (reduce #'+ (mapcar #'deep-length (cadr tree))))
-		 (if (eq (car tree) 'fun-modifier) 0 1)))
-	   (to-bytes (flat)
-	     (mapcar
-	      (lambda (x)
-		(case (car x)
-		  (fun-start x)
-		  (int (cadr x))
-		  (builtin (caadr x))))
-	      flat)))
+		 (if (eq (car tree) 'fun-modifier) 0 1))))
+;	   (to-bytes (flat)
+;	     (mapcar
+;	      (lambda (x)
+;		(case (car x)
+;		  (fun-start x)
+;		  (int (cadr x))
+;		  (builtin (caadr x))))
+;	      flat)))
     (make-flat list)))
 
 ;; From the compressed bytes, return a list of how to run them.
@@ -843,7 +975,7 @@
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
 	(setf (symbol-function 'decompress) #'commands-to-commands)
-	(let ((answer (eval (run-compiled tagged))))
+	(let ((answer (mapcar #'repl-print (eval (run-compiled tagged)))))
 	  (cons answer (list-to-bytes (drop-last (do-replace tagged *compiled-code*)))))))))
 
 (defun runq (i)
@@ -857,11 +989,46 @@
 	 (compiled (cdr answer-and-compiled))
 	 (*fun-count* 0))
     (format t "~%The compiled version is ~a of size ~a~%" compiled (length compiled))
+    (print answer)
     (setf (symbol-function 'decompress) #'compressed-to-commands)
-    (let ((run-answer (time (eval (run-compiled (bytes-to-list compiled))))))
+    (let ((run-answer (mapcar #'repl-print (time (eval (run-compiled (bytes-to-list compiled)))))))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
       (assert (equalp answer run-answer))
       run-answer)))
+
+(defun repl-print (x)
+  (case (typeof x)
+    (int x)
+    (bool 
+     (if x 'true 'false))
+    (fun 'fun)
+    (list
+;     (print x)
+     (with-forced x list
+;       (print (aref list 0))
+       (loop for i across list collect (repl-print i))))))
+
+;; (defun golf-print (stack mode)
+;;   (if (eq mode 'smart)
+;;       (cond
+;; 	((typeof (car stack) 'list)
+;; 	 (top-list-by-newlines))
+;; 	((typeof (car stack) 'int)
+;; 	 ; implode until no longer an int
+;; 	 (push (loop for while (and stack (eq (typeof (car stack)) 'int) )
+;; 		  collect (pop stack)) stack)
+;; 	 (top-list-by-spaces)))))
+
+;; (defun read-string (string mode)
+;;   (if (eq mode 'smart)
+;;       ;; try spliting by newlines if possible. 
+;;       (let* ((strs (split-by-newlines))
+;; 	     (mapcar #'split-by-spaces strs))
+;; 	)))
+	
+      
+  
+     
 
 ;(with-open-file (stream "/tmp/pipe")
 ;    (loop for line = (read-line stream nil) until (null line) do
@@ -927,3 +1094,19 @@
 ;; 		   (print (read-from-string (concatenate 'string (reverse result) nil)))
 ;; 		   (setf result nil))
 ;; 		 (push chr result)))))))
+
+
+;;[(dup 3 mod subtract dup 3 add swap) #((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))) 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force]
+
+(run '(5 range dup zip dup (*exploding *restoring arg-a arg-a add) map 1 swap force))
+
+; 
+;; ..4.....8
+;; .983..7..
+;; 51.7.9..4
+;; ...5.2...
+;; .5.....6.
+;; 4..6.1..7
+;; 7..4.6.82
+;; ..59..34.
+;; 8.....9..

@@ -34,6 +34,7 @@ halve: x -> x/2? double?
 
 is-positive?
 
+sort-by and arg-sort.
 
 ---
 Automatic Compression
