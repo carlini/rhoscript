@@ -21,7 +21,7 @@
 			  (push 0 emit)))
 		    (setf step (/ step 2)))
 	       emit)))
-    (print "setup done")
+;    (print "setup done")
   (let ((low 0)
 	(high 1))
     (loop for element in symbols for weighted-possible in weighted-possibles do
@@ -36,7 +36,7 @@
 				sum (cadr el)))
 	       (this-weight (cadr (assoc element weighted-possible :test 'equalp))))
 ;	   (print "dolet")
-	   (format t "~%ENCODE WEIGHTS ~a and ~a~%" total-weight lower-weight)
+;	   (format t "~%ENCODE WEIGHTS ~a and ~a~%" total-weight lower-weight)
 	   
 	   (let* ((distance-outer (- high low))
 		  (new-low-offset (* (/ lower-weight total-weight) distance-outer))
@@ -62,7 +62,7 @@
     
 (defun arithmetic-decode (number weighted-possible)
   (let ((total-weight (loop for el in weighted-possible sum (cadr el))))
-    (format t "~%FULL WEIGHT ~a~%" total-weight)
+;    (format t "~%FULL WEIGHT ~a~%" total-weight)
 	(let ((it 0) (sumsofar 0))
 	  (loop
 	     for el in weighted-possible 
@@ -71,6 +71,7 @@
 	       (incf it))
 	  (decf it)
 	  (let ((decoding (nth it weighted-possible)))
+	    (format t "~%Decoded to ~a" decoding)
 ;	    (format t "number now ~a" number)
 	    (setf number (- number 
 			    (- sumsofar (/ (cadr decoding) total-weight))))

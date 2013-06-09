@@ -699,7 +699,7 @@
 	 (next-block (arithmetic-decode (car not-yet-decoded) weights))
 	 (next-input (car next-block))
 	 (next-token (cdr next-block)))
-    (format t "~% nt ~a ni ~a" next-token next-input)
+    (format t "~%Next Token ~a Next Input ~a~%" next-token next-input)
     (print not-yet-decoded)
     (case (car next-token)
       (compressed-function
@@ -739,7 +739,7 @@
 ;; returns a 'decode-me containing it.
 (defun remaining-work (input)
   (format t "~%TESTREM~a" (cadr (car (last input))))
-   (when (equalp 'x (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1))))
+   (when (equalp 'x (cdr (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1)))))
 ;    (format t "We have some work left to do ~a.~%" input)
     input))
 
@@ -1094,7 +1094,8 @@
 	
       
 ;(run '(5 range (1 add) map))  
-(run '((5) 6))
+;(run '((5) 6))
+(run '(5 range 2 get 2 add))
 
 
 ;(with-open-file (stream "/tmp/pipe")
