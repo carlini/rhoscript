@@ -130,13 +130,13 @@
   	   (cdr (assoc 'initially body)))
      (setf (cdr cons-cell)
 	   (let ((stack-copy stack))
-  	   (lambda ()
-	     (let ((argument-restore-stack (list stack-copy)))
-  	     (if (not (progn ,@(cdr (assoc 'next body))))
-  		 (progn
-  		   ,@(if (assoc 'finally body)
-  			 (cdr (assoc 'finall body)))
-  		   (setf (cdr cons-cell) nil)))))))
+	     (lambda ()
+	       (let ((argument-restore-stack (list stack-copy)))
+		 (if (not (progn ,@(cdr (assoc 'next body))))
+		     (progn
+		       ,@(if (assoc 'finally body)
+			     (cdr (assoc 'finall body)))
+		       (setf (cdr cons-cell) nil)))))))
      cons-cell))
 
 ;; A macro which creates a new list based off of a previous list.
@@ -155,22 +155,17 @@
   	   (cdr (assoc 'initially body)))
      (setf (cdr cons-cell)
 	   (let ((stack-copy stack))
-  	   (lambda ()
-	     (let ((argument-restore-stack (list stack-copy)))
-;	       (print "set")
-;	       (print stack)
-	       (let ((qqvvqq
-  	     (let ((each (list-get ,list-name index)))
-  	       (if (eq null-symbol each)
-  		   (progn
-  		    ,@(if (assoc 'finally body)
-  			  (cdr (assoc 'finally body)))
-  		    (setf (cdr cons-cell) nil))
-  		   (progn
-  		    ,@(cdr (assoc 'next body))
-  		    (incf index))))))
-;		 (print "unset")
-		 qqvvqq)))))
+	     (lambda ()
+	       (let ((argument-restore-stack (list stack-copy)))
+		 (let ((each (list-get ,list-name index)))
+		   (if (eq null-symbol each)
+		       (progn
+			 ,@(if (assoc 'finally body)
+			       (cdr (assoc 'finally body)))
+			 (setf (cdr cons-cell) nil))
+		       (progn
+			 ,@(cdr (assoc 'next body))
+			 (incf index))))))))
      cons-cell))
 
 (defmacro save-arguments (&body body)
@@ -196,7 +191,6 @@
        (declare (ignore a)))
   (cmd print () ()
        (progn
-	 (print 123123123)
 	 (print "Stack dump:~%")
 	 (loop for el in stack for i from 0 do
 	      (format t "   ~a. ~a~%" i el))
@@ -372,6 +366,13 @@
 	 (next
 	  (if (not (eq index 0))
 	      (vector-push-extend each result)))))
+  (cmd set-minus ((list takeaway) (list given)) (list)
+       (with-forced takeaway forced-takeaway-arr
+	 (let ((forced-takeaway (coerce forced-takeaway-arr 'list)))
+	   (list-to-list-iter given
+	     (next
+	      (if (not (member each forced-takeaway))
+		  (vector-push-extend each result)))))))
   (cmd any ((list l)) (list)
        (not (loop for i from 0 until (eq (list-get l i) null-symbol) never (list-get l i))))
   (cmd all ((list l)) (list)
@@ -467,10 +468,10 @@
        (with-forced l list
 	 list
 	 l))
-  (cmd force-1 ((list l)) (list)
-       (if (not (null (cdr l)))
-	   (funcall (cdr l)))
-       l)
+;  (cmd force-1 ((list l)) (list)
+;       (if (not (null (cdr l)))
+;	   (funcall (cdr l)))
+;       l)
 
 ; fun
   (cmd call ((fun f)) ()
@@ -584,9 +585,6 @@
       (helper program)
       defuns)))
 
-(defvar *c1* 0)
-(defvar *c2* 0)
-
 ;; When we need a fresh function name, we use this.
 (defvar *fun-count* 0)
 (defun fresh-fun-name ()
@@ -626,9 +624,7 @@
 		      (setf (symbol-function ',fnid) fn-lambda)
 		      (setf (symbol-function ',(with-under fnid)) fn-lambda)
 		      (funcall fn-lambda nret args))
-		    (progn
-		      (incf *c2*)
-		      (funcall #',(with-under fnid) nret args)))))))))
+		    (funcall #',(with-under fnid) nret args))))))))
    defuns))
 
 ;; A generic decompressor which does nothing.
@@ -688,25 +684,62 @@
 ;; The blob of compressed data can be represented any way, as long as it is tagged
 ;; with 'decode-me. A precondition of this is that there actually exists more data.
 (defun extract-next-token (input types)
+  (format t "~%INPUT TO NEXT TOKEN ~a~%" input)
   (let* ((not-yet-decoded (cdar (last input)))
-	 (next-token (car (car not-yet-decoded))))
-    (if (eq (car next-token) 'fun-start)
-	(list 'fun-as-list 
-	      (list (list 'decode-me 
-			  (cdr (loop for i from 1 to (cadr next-token) collect 
-				    (pop (car not-yet-decoded))))))
-	      (caddr next-token))
-	(if (eq (car next-token) 'builtin)
-	    (let ((cmd (do-decode (cadr next-token) types)))
-	      (when cmd
-		(pop (car not-yet-decoded))
-		(list 'builtin cmd)))
-	    (pop (car not-yet-decoded))))))
+	 (possible-commands
+	      (mapcar #'car 
+		      (remove-if-not 
+		       (lambda (x) (is-subset-of types (cadr x))) *command-info*)))
+	 (count (length possible-commands))
+	 (weights `(,@(loop for i from 0 to 255 collect `((compressed-function ,i) ,(/ count 256)))
+		    ,@(loop for i from 0 to 9 collect `((int ,i) ,(/ count 10)))
+		    ,@(loop for i from 0 to (1- count) 
+			 collect `((builtin (,i . ,count)) 7))
+		    ((eof) ,count)))
+	 (next-block (arithmetic-decode (car not-yet-decoded) weights))
+	 (next-input (car next-block))
+	 (next-token (cdr next-block)))
+    (format t "~% nt ~a ni ~a" next-token next-input)
+    (print not-yet-decoded)
+    (case (car next-token)
+      (compressed-function
+       (let ((resulting-bits nil))
+	 (loop for i from 1 to (cadr next-token) do
+	      (let* ((both-parts (arithmetic-decode next-input '((0 1) (1 1))))
+		     (input-part (car both-parts))
+		     (bit-part (cdr both-parts)))
+		(setf next-input input-part)
+		(push bit-part resulting-bits)))
+	 (setf (car not-yet-decoded) next-input)
+	 (format t "~%BITS ARE ~a~%" (reverse resulting-bits))
+	 (print next-input)
+	 (list 'fun-as-list 
+	       (list (list 'decode-me 
+;			  (cdr (loop for i from 1 to (cadr next-token) collect 
+;				    (pop (car not-yet-decoded))))))
+			   (arithmetic-decode-preprocess (reverse resulting-bits))))
+;	      (caddr next-token))
+	     nil)))
+;       (pop not-yet-decoded))
+      (builtin
+       (let ((cmd (do-decode (cadr next-token) types)))
+	 (when cmd
+	   (setf (car not-yet-decoded) next-input)
+;	   (pop (car not-yet-decoded))
+	   (list 'builtin cmd))))
+      (eof
+       (format t "IT IS EOF")
+;       (assert nil)
+       nil)
+      (otherwise
+       (setf (car not-yet-decoded) next-input)
+       next-token))))
 
 ;; Checks if there is actually any remaining work to do, and if there is
 ;; returns a 'decode-me containing it.
 (defun remaining-work (input)
-  (when (cadr (car (last input)))
+  (format t "~%TESTREM~a" (cadr (car (last input))))
+   (when (equalp 'x (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1))))
 ;    (format t "We have some work left to do ~a.~%" input)
     input))
 
@@ -839,7 +872,6 @@
 	 (defun-part-2 (cdr ir-part))
 	 (final-part
 	  `(lambda (nret args)
-	     (incf *c1*)
 	     ,@(if (member '*restoring block-kinds)
 		   '((push stack restore-stack)))
 	     (setq stack (append args stack))
@@ -856,6 +888,7 @@
 		   `((pop argument-restore-stack)))
 
 	     ,@lambda-part
+
 
 	     (let ((answer 
 		    (case nret
@@ -901,33 +934,65 @@
 ;; dense, yet still represent the same information.
 ;;   1. Flatten out the data.
 (defun list-to-bytes (list)
-;  (print list)
-  (labels ((make-flat (tree)
-	     (if (eq (car tree) 'fun)
-		 (let ((modifiers 
-			(loop while (eq (car (caadr tree)) 'fun-modifier)
-			   collect (cadr (pop (cadr tree))))))
-		   (cons (list 'fun-start (deep-length tree) modifiers)
-			 (reduce #'append (mapcar #'make-flat (cadr tree)))))
-		 (list tree)))
-	   (deep-length (tree)
-	     (if (eq (car tree) 'fun)
-		 (1+ (reduce #'+ (mapcar #'deep-length (cadr tree))))
-		 (if (eq (car tree) 'fun-modifier) 0 1))))
-;	   (to-bytes (flat)
-;	     (mapcar
-;	      (lambda (x)
-;		(case (car x)
-;		  (fun-start x)
-;		  (int (cadr x))
-;		  (builtin (caadr x))))
-;	      flat)))
-    (make-flat list)))
+  (format t "~%AAAAAA ~a" list)
+  (labels ((prepare (function-tree)
+	     (let ((modifiers 
+		    (loop while (eq (car (car function-tree)) 'fun-modifier)
+		       collect (cadr (pop function-tree)))))
+	       (append
+		(reduce #'append
+			(mapcar
+			 (lambda (x)
+			   (if (eq (car x) 'fun)
+			       (let ((encoded (arithmetic-encode-body (cadr x))))
+				 `((compressed-function ,(length encoded))
+				   ,@(mapcar (lambda (x) `(single-bit ,x)) encoded)))
+			       (list x)))
+			 function-tree))
+		(list '(eof)))))
+;		     ,@(reduce #'append (mapcar #'make-flat (cadr tree)))
+;		     (fun-end)))
+	   (arithmetic-encode-body (function)
+	     (format t "~%QQQQ~a" function)
+	     (let* ((flat-function (prepare function)))
+	       (format t "~%BBBBBB ~a~%" flat-function)
+	       (arithmetic-encode
+		flat-function
+		(append
+		 (loop for elt in flat-function collect
+		      (case (car elt)
+			(int
+			 `((funthing 10) 
+			   ,@(loop for i from 0 to 9 collect `((int ,i) 1)) 
+			   (rest 70)
+			   ((eof) 10)))
+			(compressed-function
+			 `(,@(loop for i from 0 to 255 collect
+				  `((compressed-function ,i) 1))
+			     (other-stuff ,(* 256 9))))
+			(single-bit
+			 `(((single-bit 0) 1) ((single-bit 1) 1)))
+			(builtin
+			 (let ((count (cdadr elt)))
+			   `((functhing ,count) (integers ,count)
+			     ,@(loop for i from 0 to (1- count) collect
+				    `((builtin (,i . ,count)) 7))
+			     ((eof) ,count))))
+			(eof
+			 `(((stuff) 9) ((eof) 1))))))))))
+
+      (arithmetic-encode-body (cadr list))))
+
 
 ;; From the compressed bytes, return a list of how to run them.
 (defun bytes-to-list (bytes)
-  (assert (eq (caar bytes) 'fun-start))
-  (list 'fun (list (list 'decode-me (cdr bytes)))))
+  (let* ((encoded (arithmetic-decode-preprocess bytes)))
+;	 (first-block (arithmetic-decode encoded '(((fun-start ()) 1/2) (fun-end 1/2) (rest 9))))
+;	 (encoded-rest (car first-block))
+;	 (decoded (cdr first-block)))
+;    (print decoded)
+;    (assert (equalp decoded '(fun-start ())))
+    (list 'fun (list (list 'decode-me encoded)))))
 
 ;; Converts the high-level language to commands tagged by their type.
 (defun add-types-to-user-input (input)
@@ -988,8 +1053,9 @@
 	 (answer (car answer-and-compiled))
 	 (compiled (cdr answer-and-compiled))
 	 (*fun-count* 0))
-    (format t "~%The compiled version is ~a of size ~a~%" compiled (length compiled))
-    (print answer)
+    (format t "~%The compiled version is ~a of size ~a ~a~%" compiled (length compiled) 
+	    (/ (length compiled) 8.0))
+;    (print answer)
     (setf (symbol-function 'decompress) #'compressed-to-commands)
     (let ((run-answer (mapcar #'repl-print (time (eval (run-compiled (bytes-to-list compiled)))))))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
@@ -1027,8 +1093,9 @@
 ;; 	)))
 	
       
-  
-     
+;(run '(5 range (1 add) map))  
+(run '((5) 6))
+
 
 ;(with-open-file (stream "/tmp/pipe")
 ;    (loop for line = (read-line stream nil) until (null line) do
@@ -1098,7 +1165,7 @@
 
 ;;[(dup 3 mod subtract dup 3 add swap) #((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))) 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force]
 
-(run '(5 range dup zip dup (*exploding *restoring arg-a arg-a add) map 1 swap force))
+;(run '(5 range dup zip dup (*exploding *restoring arg-a arg-a add) map 1 swap force))
 
 ; 
 ;; ..4.....8
