@@ -5,23 +5,26 @@
 
 (defun arithmetic-encode (symbols weighted-possibles)
   (labels ((pick-point-in (low high)
-;	     (format t "pick in ~a ~a~%" low high)
+	     (format t "pick in ~a ~a~%" low high)
 	     (assert (< low high))
 	     (let ((point (/ 1 2))
 		   (step (/ 1 2))
 		   (midpoint (/ (+ low high) 2))
 		   (emit nil))
 	       (loop while (not (and (point-in-range (+ point step) low high)
-				     (point-in-range (- point step) low high))) do
-;		    (print (+ .0 point))
-;		    (print (+ .0 step))
+				     (point-in-range (- point step) low high)))  do
+;		  for i from 0 to 10 do
+		    (print (list point step))
+
 		    (if (point-in-range midpoint point (+ point step))
 			(progn
 			  (setf point (+ point (/ step 2)))
 			  (push 1 emit))
-			(progn
-			  (setf point (- point (/ step 2)))
-			  (push 0 emit)))
+			(if (point-in-range midpoint (- point step) point)
+			    (progn
+			      (setf point (- point (/ step 2)))
+			      (push 0 emit))
+			    (error "out of range?")))
 		    (setf step (/ step 2)))
 	       emit)))
 ;    (print "setup done")
@@ -46,6 +49,8 @@
 				      while (not (equalp (car el) element))
 				      sum (cadr el)))
 		 (setf this-weight (cadr (assoc element weighted-possible :test 'equalp)))))
+	   (assert (numberp this-weight))
+	   (assert (> this-weight 0))
 ;	   (format t "~%ENCODE WEIGHTS ~a, ~a and ~a~%" total-weight lower-weight this-weight)
 	   
 	   (let* ((distance-outer (- high low))
@@ -72,7 +77,8 @@
 (defun arithmetic-decode (number weighted-possible)
   (let ((total-weight 0)
 	(it 0) (sumsofar 0)
-	(decoding nil))
+	(decoding nil)
+	(splitfactor 0))
     (if (eq (car weighted-possible) :geometric-mode)
 	(let* ((geometric-value 1)
 	       (base-geometric-value (second weighted-possible)))
@@ -89,7 +95,8 @@
 	  (setf number (- number (/ (- sumsofar (/ geometric-value base-geometric-value))
 				       total-weight)))
 ;	  (format t "number then ~a" number)
-	  (setf number (/ number (/ (/ geometric-value base-geometric-value) total-weight))))
+	  (setf splitfactor (/ (/ geometric-value base-geometric-value) total-weight))
+	  (setf number (/ number splitfactor)))
 ;	  (format t "number finally ~a" number))
 	(progn
 	  (setf total-weight (loop for el in weighted-possible sum (cadr el)))
@@ -104,10 +111,10 @@
 	  (setf number (- number 
 			  (- sumsofar (/ (cadr decoding) total-weight))))
 ;	  (format t " number then ~a" number)
-	  (setf number (/ number
-			  (/ (cadr decoding) total-weight)))))
+	  (setf splitfactor (/ (cadr decoding) total-weight))
+	  (setf number (/ number splitfactor))))
 ;	  (format t "number finally ~a~%" number)))
-      (cons number (car decoding))))
+      (list number splitfactor (car decoding))))
 
 (defun arithmetic-decode-loop (number weighted-possible)
   (let* ((elt (arithmetic-decode number weighted-possible))

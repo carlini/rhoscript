@@ -682,7 +682,7 @@
 
 (defun make-function-weights (&optional (ct 1))
     (let ((valids '(nil (*restoring) (*exploding) 
-		    (*exploding *restoring))))
+		    (*restoring *exploding))))
       (loop for el in valids
 	 collect `((fun ,el) ,(/ ct (length valids))))))
 
@@ -691,6 +691,9 @@
 ;; with 'decode-me. A precondition of this is that there actually exists more data.
 (defun extract-next-token (input types)
 ;  (format t "~%INPUT TO NEXT TOKEN ~a~%" input)
+  (print input)
+  (format t "~%TESTREMF ~a ~a" (> 1 (nth 2 (car (last input)))) (log (nth 2 (car (last input))) 2))
+  (if (< 3.33 (log (nth 2 (car (last input))) 2))
   (let* ((not-yet-decoded (cdar (last input)))
 	 (possible-commands
 	      (mapcar #'car 
@@ -700,21 +703,28 @@
 	 (weights `(,@(make-function-weights count)
 		    (it-is-an-integer ,count)
 		    ,@(loop for i from 0 to (1- count) 
-			 collect `((builtin (,i . ,count)) 7))
-		    ((eof) ,count)))
+			 collect `((builtin (,i . ,count)) 7))))
+;		    ((eof) ,count)))
 	 (next-block (arithmetic-decode (car not-yet-decoded) weights))
-	 (next-input (car next-block))
-	 (next-token (cdr next-block)))
+	 (next-input (first next-block))
+	 (expand-amount (second next-block))
+	 (next-token (third next-block)))
 ;    (print "BLOCK")
+;    (print not-yet-decoded)
+;    (print next-token)
 ;    (print next-block)
     (when (eq next-token 'it-is-an-integer)
+	(setf (second not-yet-decoded) (* (second not-yet-decoded) (second next-block)))
 	(setf next-block (arithmetic-decode next-input '(:geometric-mode 9/10)))
-	(setf next-input (car next-block))
-	(setf next-token (list 'int (cdr next-block))))
+	(setf next-input (first next-block))
+	(setf expand-amount (second next-block))
+	(setf next-token (list 'int (third next-block))))
     (when (eq (car next-token) 'fun)
+	(setf (second not-yet-decoded) (* (second not-yet-decoded) (second next-block)))
 	(setf next-block (arithmetic-decode next-input '(:geometric-mode 9/10)))
-	(setf next-input (car next-block))
-	(setf next-token (list 'compressed-function (cdr next-block) (cadr next-token))))
+	(setf next-input (first next-block))
+	(setf expand-amount (second next-block))
+	(setf next-token (list 'compressed-function (third next-block) (second next-token))))
 ;    (format t "~%Next Token ~a Next Input ~a~%" next-token next-input)
 ;    (print not-yet-decoded)
     (case (car next-token)
@@ -722,41 +732,54 @@
        (let ((resulting-bits nil))
 	 (loop for i from 1 to (second next-token) do
 	      (let* ((both-parts (arithmetic-decode next-input '((0 1) (1 1))))
-		     (input-part (car both-parts))
-		     (bit-part (cdr both-parts)))
+		     (input-part (first both-parts))
+		     (bit-part (third both-parts)))
+		(setf (second not-yet-decoded) (* (second not-yet-decoded) (second both-parts)))
 		(setf next-input input-part)
 		(push bit-part resulting-bits)))
 	 (setf (car not-yet-decoded) next-input)
+	 (setf (second not-yet-decoded) (* (second not-yet-decoded) (second next-block)))
 ;	 (format t "~%BITS ARE ~a~%" (reverse resulting-bits))
 ;	 (print next-input)
-	 (format t "DEFINING FUNCTION WITH ~a" next-token)
+;	 (format t "DEFINING FUNCTION WITH ~a" next-token)
 	 (list 'fun-as-list 
 	       (list (list 'decode-me 
 ;			  (cdr (loop for i from 1 to (cadr next-token) collect 
 ;				    (pop (car not-yet-decoded))))))
-			   (arithmetic-decode-preprocess (reverse resulting-bits))))
+			   (arithmetic-decode-preprocess (reverse resulting-bits))
+			   (expt 2 (length resulting-bits))))
 	      (third next-token))))
 ;       (pop not-yet-decoded))
       (builtin
        (let ((cmd (do-decode (cadr next-token) types)))
 	 (when cmd
 	   (setf (car not-yet-decoded) next-input)
+	   (setf (second not-yet-decoded) (* (second not-yet-decoded) expand-amount))
 ;	   (pop (car not-yet-decoded))
 	   (list 'builtin cmd))))
-      (eof
+;      (eof
 ;       (format t "IT IS EOF")
 ;       (assert nil)
-       nil)
-      (otherwise
+;       nil)
+      (int
        (setf (car not-yet-decoded) next-input)
-       next-token))))
+       (setf (second not-yet-decoded) (* (second not-yet-decoded) expand-amount))
+       next-token)
+      (otherwise
+       (error "oh noes"))))
+  nil))
 
 ;; Checks if there is actually any remaining work to do, and if there is
 ;; returns a 'decode-me containing it.
 (defun remaining-work (input)
-;  (format t "~%TESTREM~a" (cadr (car (last input))))
-   (when (equalp 'x (cdr (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1)))))
-;    (format t "We have some work left to do ~a.~%" input)
+;  (let* ((arth (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1))))
+;	 (remwork (* (nth 2 (car (last input))) (second arth))))
+;    (if (not (equalp 'x (third arth)))
+;	(format t "~%TESTREMT ~a ~a" (> 3.33 (log remwork 2)) (log remwork 2))))
+;   (when (equalp 'x (third (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1)))))
+;     input))
+  (print (log (nth 2 (car (last input))) 2))
+  (when (< 3.33 (log (nth 2 (car (last input))) 2))
     input))
 
 ;; Decodes a blob of compressed data to some commands by lookking at the stack.
@@ -934,12 +957,12 @@
 	    final-part))))
 
 ;; Returns the full expanded lisp code which runs some commands.
-(defun run-compiled (commands)
+(defun run-compiled (commands init-stack)
   (setf stack nil)
   (setf restore-stack nil)
   (setf argument-restore-stack nil)
   (make-commands)
-  `(let ((stack '())
+  `(let ((stack ',init-stack)
 	 (argument-restore-stack '())
 	 (restore-stack '()))
      ,(cons 'progn (create-defuns (parse-and-split commands)))
@@ -968,8 +991,8 @@
 				   `((int)
 				     (geometric-number ,(cadr x)))
 				   (list x))))
-			 function-tree))
-		(list '(eof))))
+			 function-tree))))
+;		(list '(eof))))
 	   (get-modifiers (body)
 		    (loop while (eq (car (car body)) 'fun-modifier)
 		       collect (cadr (pop body))))
@@ -986,11 +1009,11 @@
 		 (loop for elt in flat-function collect
 		      (case (car elt)
 			(int
-			 `(((funs) 1) ((int) 1) ((other) 8)))
+			 `(((funs) 1) ((int) 1) ((other) 7)))
 			(fun
-			 (format t "asdfasdfadsf ~a ~a" elt (make-function-weights))
+;			 (format t "asdfasdfadsf ~a ~a" elt (make-function-weights))
 			   `(,@(make-function-weights)
-			       ((other) 9)))
+			       ((other) 8)))
 			(geometric-number
 			 `(:geometric-mode 9/10))
 			(single-bit
@@ -999,10 +1022,10 @@
 			 (let ((count (cdadr elt)))
 			   `((functhing ,count) (integers ,count)
 			     ,@(loop for i from 0 to (1- count) collect
-				    `((builtin (,i . ,count)) 7))
-			     ((eof) ,count))))
-			(eof
-			 `(((stuff) 9) ((eof) 1))))))))))
+				    `((builtin (,i . ,count)) 7))))))))))))
+;			     ((eof) ,count))))
+;			(eof
+;			 `(((stuff) 9) ((eof) 1))))))))))
 
       (arithmetic-encode-body (cadr list))))
 
@@ -1015,7 +1038,7 @@
 ;	 (decoded (cdr first-block)))
 ;    (print decoded)
 ;    (assert (equalp decoded '(fun-start ())))
-    (list 'fun (list (list 'decode-me encoded)))))
+    (list 'fun (list (list 'decode-me encoded (expt 2 (length bytes)))))))
 
 ;; Converts the high-level language to commands tagged by their type.
 (defun add-types-to-user-input (input)
@@ -1032,7 +1055,7 @@
 ;; compression of the builtins.
 ;; Also returns the answer we got from here, to make sure it's the same as
 ;; the answer we get when we actually run the program.
-(defun compile-by-running (input)
+(defun compile-by-running (input init-stack)
   (let ((id 0))
     (labels ((tag-input (in)
 	       (if (eq (car in) 'fun)
@@ -1063,16 +1086,13 @@
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
 	(setf (symbol-function 'decompress) #'commands-to-commands)
-	(let ((answer (mapcar #'repl-print (eval (run-compiled tagged)))))
+	(let ((answer (mapcar #'repl-print (eval (run-compiled tagged init-stack)))))
 	  (cons answer (list-to-bytes (drop-last (do-replace tagged *compiled-code*)))))))))
 
-(defun runq (i)
-  (print (compile-by-running i)))
-
 ;; Run the program by first compiling it, then running it.
-(defun run (i) 
+(defun run (i &optional (init-stack nil))
   (format t "~%Run the program ~a" i)
-  (let* ((answer-and-compiled (compile-by-running i))
+  (let* ((answer-and-compiled (compile-by-running i init-stack))
 	 (answer (car answer-and-compiled))
 	 (compiled (cdr answer-and-compiled))
 	 (*fun-count* 0))
@@ -1080,7 +1100,8 @@
 	    (/ (length compiled) 8.0))
 ;    (print answer)
     (setf (symbol-function 'decompress) #'compressed-to-commands)
-    (let ((run-answer (mapcar #'repl-print (time (eval (run-compiled (bytes-to-list compiled)))))))
+    (let ((run-answer (mapcar #'repl-print 
+			      (time (eval (run-compiled (bytes-to-list compiled) init-stack))))))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
       (assert (equalp answer run-answer))
       run-answer)))
@@ -1117,7 +1138,7 @@
 	
       
 ;(run '(5 range (1 add) map))  
-(run '((*restoring 5) call))
+;(run '((*restoring 5) call))
 ;(run '(5 range 2 get 2 add))
 ;(run '(87))
 ;(run '(1 2))
@@ -1189,9 +1210,9 @@
 ;; 		 (push chr result)))))))
 
 
-;;[(dup 3 mod subtract dup 3 add swap) #((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))) 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force]
+;; (run '((dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
 
-;(run '(5 range dup zip dup (*exploding *restoring arg-a arg-a add) map 1 swap force))
+;(run '(5 range dup zip dup (*restoring *exploding arg-a arg-a add) map 1 swap force))
 
 ; 
 ;; ..4.....8
@@ -1203,3 +1224,4 @@
 ;; 7..4.6.82
 ;; ..59..34.
 ;; 8.....9..
+

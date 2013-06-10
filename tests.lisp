@@ -77,6 +77,12 @@
 (test "Unknown types 3" 14
   5 range (inc arg-a multiply) map 3 get 2 add)
 
+(test "Basic nonrestoring" 5
+  3 (5) call)
+
+(test "Basic restoring" 3
+  3 (*restoring 5) call)
+
 (test "Arguments are half-lexically scoped" '(0 1 2 3 4)
   5 range dup (*restoring arg-b arg-a get) map 1 swap force)
 
@@ -111,7 +117,7 @@
   102 range-from-1 butfirst (gcd 1 neq) uniq-by sum)
 
 (test "Five queens 1" 10
-  5 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length)
+  5 range permutations (with-index dup outer flatten (flatten) map (*restoring *exploding arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length)
 
 (test "Five queens 2" 10
   5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length)
