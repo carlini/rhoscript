@@ -40,15 +40,7 @@ sort-by and arg-sort.
 Automatic Compression
 ---
 
-Missing open or close parens should be fixed automatically with the same one.
-
 A function on the top of the stack at the end should be called with map.
-
-Current: static binding of character -> [function], select by type
-Better: Depending on types on stack, map character -> function.
-    This saves space when only ~10 possible functions to call matching fun->fun->list.
-
-Arithmetic encoding?
 
 Type functions on the stack? Map and reduce could be on the same word.
 
@@ -58,6 +50,8 @@ It doesn't make sense to call "dup swap", or "* drop" where "*" freshly pushes a
 ---
 Code Compression
 ---
+
+When stack is empty, there should be very few legal function calls...
 
 Start block by encoding length of the block (in bits). Then, for each block,
 encode the function:

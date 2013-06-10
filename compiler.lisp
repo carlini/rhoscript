@@ -680,46 +680,62 @@
 ;	(format t "~%Decoded ~a to ~a" command-abbrv (nth (car command-abbrv) possible-commands))
 	(nth (car command-abbrv) possible-commands))))
 
+(defun make-function-weights (&optional (ct 1))
+    (let ((valids '(nil (*restoring) (*exploding) 
+		    (*exploding *restoring))))
+      (loop for el in valids
+	 collect `((fun ,el) ,(/ ct (length valids))))))
+
 ;; Given the big blob of compressed data, extracts the next single token.
 ;; The blob of compressed data can be represented any way, as long as it is tagged
 ;; with 'decode-me. A precondition of this is that there actually exists more data.
 (defun extract-next-token (input types)
-  (format t "~%INPUT TO NEXT TOKEN ~a~%" input)
+;  (format t "~%INPUT TO NEXT TOKEN ~a~%" input)
   (let* ((not-yet-decoded (cdar (last input)))
 	 (possible-commands
 	      (mapcar #'car 
 		      (remove-if-not 
 		       (lambda (x) (is-subset-of types (cadr x))) *command-info*)))
 	 (count (length possible-commands))
-	 (weights `(,@(loop for i from 0 to 255 collect `((compressed-function ,i) ,(/ count 256)))
-		    ,@(loop for i from 0 to 9 collect `((int ,i) ,(/ count 10)))
+	 (weights `(,@(make-function-weights count)
+		    (it-is-an-integer ,count)
 		    ,@(loop for i from 0 to (1- count) 
 			 collect `((builtin (,i . ,count)) 7))
 		    ((eof) ,count)))
 	 (next-block (arithmetic-decode (car not-yet-decoded) weights))
 	 (next-input (car next-block))
 	 (next-token (cdr next-block)))
-    (format t "~%Next Token ~a Next Input ~a~%" next-token next-input)
-    (print not-yet-decoded)
+;    (print "BLOCK")
+;    (print next-block)
+    (when (eq next-token 'it-is-an-integer)
+	(setf next-block (arithmetic-decode next-input '(:geometric-mode 9/10)))
+	(setf next-input (car next-block))
+	(setf next-token (list 'int (cdr next-block))))
+    (when (eq (car next-token) 'fun)
+	(setf next-block (arithmetic-decode next-input '(:geometric-mode 9/10)))
+	(setf next-input (car next-block))
+	(setf next-token (list 'compressed-function (cdr next-block) (cadr next-token))))
+;    (format t "~%Next Token ~a Next Input ~a~%" next-token next-input)
+;    (print not-yet-decoded)
     (case (car next-token)
       (compressed-function
        (let ((resulting-bits nil))
-	 (loop for i from 1 to (cadr next-token) do
+	 (loop for i from 1 to (second next-token) do
 	      (let* ((both-parts (arithmetic-decode next-input '((0 1) (1 1))))
 		     (input-part (car both-parts))
 		     (bit-part (cdr both-parts)))
 		(setf next-input input-part)
 		(push bit-part resulting-bits)))
 	 (setf (car not-yet-decoded) next-input)
-	 (format t "~%BITS ARE ~a~%" (reverse resulting-bits))
-	 (print next-input)
+;	 (format t "~%BITS ARE ~a~%" (reverse resulting-bits))
+;	 (print next-input)
+	 (format t "DEFINING FUNCTION WITH ~a" next-token)
 	 (list 'fun-as-list 
 	       (list (list 'decode-me 
 ;			  (cdr (loop for i from 1 to (cadr next-token) collect 
 ;				    (pop (car not-yet-decoded))))))
 			   (arithmetic-decode-preprocess (reverse resulting-bits))))
-;	      (caddr next-token))
-	     nil)))
+	      (third next-token))))
 ;       (pop not-yet-decoded))
       (builtin
        (let ((cmd (do-decode (cadr next-token) types)))
@@ -728,7 +744,7 @@
 ;	   (pop (car not-yet-decoded))
 	   (list 'builtin cmd))))
       (eof
-       (format t "IT IS EOF")
+;       (format t "IT IS EOF")
 ;       (assert nil)
        nil)
       (otherwise
@@ -738,7 +754,7 @@
 ;; Checks if there is actually any remaining work to do, and if there is
 ;; returns a 'decode-me containing it.
 (defun remaining-work (input)
-  (format t "~%TESTREM~a" (cadr (car (last input))))
+;  (format t "~%TESTREM~a" (cadr (car (last input))))
    (when (equalp 'x (cdr (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1)))))
 ;    (format t "We have some work left to do ~a.~%" input)
     input))
@@ -934,42 +950,49 @@
 ;; dense, yet still represent the same information.
 ;;   1. Flatten out the data.
 (defun list-to-bytes (list)
-  (format t "~%AAAAAA ~a" list)
+;  (format t "~%AAAAAA ~a" list)
   (labels ((prepare (function-tree)
-	     (let ((modifiers 
-		    (loop while (eq (car (car function-tree)) 'fun-modifier)
-		       collect (cadr (pop function-tree)))))
+	     (print function-tree)
 	       (append
 		(reduce #'append
 			(mapcar
 			 (lambda (x)
 			   (if (eq (car x) 'fun)
-			       (let ((encoded (arithmetic-encode-body (cadr x))))
-				 `((compressed-function ,(length encoded))
+			       (let ((encoded (arithmetic-encode-body 
+					       (subseq (cadr x) 
+						       (length (get-modifiers (cadr x)))))))
+				 `((fun ,(get-modifiers (cadr x)))
+				   (geometric-number ,(length encoded))
 				   ,@(mapcar (lambda (x) `(single-bit ,x)) encoded)))
-			       (list x)))
+			       (if (eq (car x) 'int)
+				   `((int)
+				     (geometric-number ,(cadr x)))
+				   (list x))))
 			 function-tree))
-		(list '(eof)))))
+		(list '(eof))))
+	   (get-modifiers (body)
+		    (loop while (eq (car (car body)) 'fun-modifier)
+		       collect (cadr (pop body))))
 ;		     ,@(reduce #'append (mapcar #'make-flat (cadr tree)))
 ;		     (fun-end)))
 	   (arithmetic-encode-body (function)
-	     (format t "~%QQQQ~a" function)
+;	     (format t "~%QQQQ~a" function)
 	     (let* ((flat-function (prepare function)))
-	       (format t "~%BBBBBB ~a~%" flat-function)
+;	       (format t "~%BBBBBB ~a~%" flat-function)
 	       (arithmetic-encode
-		flat-function
+		(mapcar (lambda (x) (if (eq (car x) 'geometric-number) (cadr x) x))
+			flat-function)
 		(append
 		 (loop for elt in flat-function collect
 		      (case (car elt)
 			(int
-			 `((funthing 10) 
-			   ,@(loop for i from 0 to 9 collect `((int ,i) 1)) 
-			   (rest 70)
-			   ((eof) 10)))
-			(compressed-function
-			 `(,@(loop for i from 0 to 255 collect
-				  `((compressed-function ,i) 1))
-			     (other-stuff ,(* 256 9))))
+			 `(((funs) 1) ((int) 1) ((other) 8)))
+			(fun
+			 (format t "asdfasdfadsf ~a ~a" elt (make-function-weights))
+			   `(,@(make-function-weights)
+			       ((other) 9)))
+			(geometric-number
+			 `(:geometric-mode 9/10))
 			(single-bit
 			 `(((single-bit 0) 1) ((single-bit 1) 1)))
 			(builtin
@@ -1094,8 +1117,10 @@
 	
       
 ;(run '(5 range (1 add) map))  
-;(run '((5) 6))
-(run '(5 range 2 get 2 add))
+(run '((*restoring 5) call))
+;(run '(5 range 2 get 2 add))
+;(run '(87))
+;(run '(1 2))
 
 
 ;(with-open-file (stream "/tmp/pipe")
