@@ -121,3 +121,5 @@
 
 (test "Five queens 2" 10
   5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length)
+
+

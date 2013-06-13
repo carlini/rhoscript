@@ -44,27 +44,25 @@ A function on the top of the stack at the end should be called with map.
 
 Type functions on the stack? Map and reduce could be on the same word.
 
-It doesn't make sense to call "dup swap", or "* drop" where "*" freshly pushes a new value.
+Lots of combinations produce identical results.
+ - "dup swap", or "* drop" where "*" freshly pushes a new value are equal to just ""
+ - "2 multiply" and "dup add" are the same
+ - If can statically detect arg-a and dup are identical, only use one.
+ - Range butfirst => range-from-1 butfirst
 
 
 ---
 Code Compression
 ---
 
-When stack is empty, there should be very few legal function calls...
-
-Start block by encoding length of the block (in bits). Then, for each block,
-encode the function:
-
-1. Filter all available functions by those which match the types on the stack.
-2. Weight each function by how valuable it is.
-3. Compute, using the function weights, the arithmetic encoding of each.
-
 It doesn't make sense to run some functions in non-stack-restoring mode (e.g., do-while, ite).
 
 Right now the assumption is that the probability you will push an integer (or start a new function)
   is equal even if there are more builtins you could call. Maybe this isn't the case.
   This is because integers and function starts are given N% of the arithmetic space initially.
+
+Instead of length-encoding the first function, add a 1 bit to the end, and then pad to 0 mod 8.
+  Only adds 1 bit to functions on average.
 
 ---
 IO

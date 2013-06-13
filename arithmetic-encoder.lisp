@@ -5,7 +5,7 @@
 
 (defun arithmetic-encode (symbols weighted-possibles)
   (labels ((pick-point-in (low high)
-	     (format t "pick in ~a ~a~%" low high)
+;	     (format t "pick in ~a ~a~%" low high)
 	     (assert (< low high))
 	     (let ((point (/ 1 2))
 		   (step (/ 1 2))
@@ -14,7 +14,7 @@
 	       (loop while (not (and (point-in-range (+ point step) low high)
 				     (point-in-range (- point step) low high)))  do
 ;		  for i from 0 to 10 do
-		    (print (list point step))
+;		    (print (list point step))
 
 		    (if (point-in-range midpoint point (+ point step))
 			(progn

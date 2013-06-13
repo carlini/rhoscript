@@ -132,6 +132,7 @@
 	   (let ((stack-copy stack))
 	     (lambda ()
 	       (let ((argument-restore-stack (list stack-copy)))
+;		 (format t "Set ARS 1 ~A~%" argument-restore-stack)
 		 (if (not (progn ,@(cdr (assoc 'next body))))
 		     (progn
 		       ,@(if (assoc 'finally body)
@@ -157,6 +158,7 @@
 	   (let ((stack-copy stack))
 	     (lambda ()
 	       (let ((argument-restore-stack (list stack-copy)))
+;		 (format t "Set ARS 2 ~A~%" argument-restore-stack)
 		 (let ((each (list-get ,list-name index)))
 		   (if (eq null-symbol each)
 		       (progn
@@ -170,6 +172,7 @@
 
 (defmacro save-arguments (&body body)
   `(let ((argument-restore-stack (cons stack argument-restore-stack)))
+;     (format t "Set ARS 3 ~A~%" argument-restore-stack)
      ,@body))
 
 (commands
@@ -191,7 +194,7 @@
        (declare (ignore a)))
   (cmd print () ()
        (progn
-	 (print "Stack dump:~%")
+	 (format t "Stack dump:~%")
 	 (loop for el in stack for i from 0 do
 	      (format t "   ~a. ~a~%" i el))
 	 (format t "~%")))
@@ -239,7 +242,9 @@
        (not (>= a b)))
   (cmd add ((int a) (int b)) (int)
        "Adds the top two elements onf the stack."
-       (+ a b))
+       (progn
+;	 (format t "~%add ~a ~a" a b)
+	 (+ a b)))
   (cmd inc ((int a)) (int)
        "Increments the top element of the stack."
        (+ a 1))
@@ -483,6 +488,8 @@
         to the old element."
        (list-to-list-iter l
 	   (next
+;	    (print "NEXT ITER")
+;	    (print stack)
 	    (vector-push-extend (funcall fn 1 (list each)) result))))
   (cmd filter ((fun fn) (list l)) (list)
        "Returns a new list where only elements where the function returns true are retained."
@@ -552,8 +559,8 @@
 ;; (int type) is not a subset of (int int).
 (defun is-subset-of (a b)
   (cond
-    ((null a) t)
     ((null b) t)
+    ((null a) nil)
     ((or (equal (car a) 'abort) (equal (car b) 'abort)) nil)
     ((or (equal (car b) 'type) (equal (car a) (car b)))
      (is-subset-of (cdr a) (cdr b)))
@@ -618,7 +625,7 @@
 	      (defun ,fnid (nret args)
 		(if first
 		    (let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
-						     ',body (append args stack) #'decompress))
+						     ',body args stack #'decompress))
 			   (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) fn-body))))
 		      (setf first nil)
 		      (setf (symbol-function ',fnid) fn-lambda)
@@ -628,8 +635,8 @@
    defuns))
 
 ;; A generic decompressor which does nothing.
-(defun decompress (input types fnid) 
-  (declare (ignore input types fnid))
+(defun decompress (input args types fnid) 
+  (declare (ignore input args types fnid))
   (assert nil))
 
 ;; When we're doing the compilation run, this is where we put all of the
@@ -650,7 +657,8 @@
 ;; A "decompressor" used in compilation run. 
 ;; It turns commands in to commands, but first inspects the stack  and uses this
 ;; information to encode the commands.
-(defun commands-to-commands (input types fnid)
+(defun commands-to-commands (input args types fnid)
+  (declare (ignore args))
   (let ((new-name (intern (concatenate 'string
 				       (symbol-name fnid) "P"))))
     (if (eq (caar input) 'builtin)
@@ -691,8 +699,8 @@
 ;; with 'decode-me. A precondition of this is that there actually exists more data.
 (defun extract-next-token (input types)
 ;  (format t "~%INPUT TO NEXT TOKEN ~a~%" input)
-  (print input)
-  (format t "~%TESTREMF ~a ~a" (> 1 (nth 2 (car (last input)))) (log (nth 2 (car (last input))) 2))
+;  (print input)
+;  (format t "~%TESTREMF ~a ~a" (> 1 (nth 2 (car (last input)))) (log (nth 2 (car (last input))) 2))
   (if (< 3.33 (log (nth 2 (car (last input))) 2))
   (let* ((not-yet-decoded (cdar (last input)))
 	 (possible-commands
@@ -703,7 +711,7 @@
 	 (weights `(,@(make-function-weights count)
 		    (it-is-an-integer ,count)
 		    ,@(loop for i from 0 to (1- count) 
-			 collect `((builtin (,i . ,count)) 7))))
+			 collect `((builtin (,i . ,count)) 8))))
 ;		    ((eof) ,count)))
 	 (next-block (arithmetic-decode (car not-yet-decoded) weights))
 	 (next-input (first next-block))
@@ -778,7 +786,7 @@
 ;	(format t "~%TESTREMT ~a ~a" (> 3.33 (log remwork 2)) (log remwork 2))))
 ;   (when (equalp 'x (third (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1)))))
 ;     input))
-  (print (log (nth 2 (car (last input))) 2))
+;  (print (log (nth 2 (car (last input))) 2))
   (when (< 3.33 (log (nth 2 (car (last input))) 2))
     input))
 
@@ -791,10 +799,12 @@
 ;; If it can't convert the compressed input to decompressed data all at once, it
 ;; pushes on to the stack a continuation representing the rest of the work to do,
 ;; and then pushes the "call" builtin.
-(defun compressed-to-commands (input types fnid)
+(defun compressed-to-commands (input restore-args types fnid)
   (let ((commands nil)
 	(cont t)
-	(defun-part nil))
+	(defun-part nil)
+	(argstack-types (mapcar #'typeof restore-args)))
+;    (format t "ARGSTACKTYPES ~a~%" restore-args)
     (loop while cont do
 	 (let ((cmd 
 		(if (not (member 'abort types)) 
@@ -827,6 +837,18 @@
 		       (push a types)
 		       (push b types))
 		     (push '(builtin swap) commands))
+		    ;; (arg-a
+		    ;;  (push (first argstack-types) types)
+		    ;;  (push '(builtin arg-a) commands))
+		    ;; (arg-b
+		    ;;  (push (second argstack-types) types)
+		    ;;  (push '(builtin arg-b) commands))
+		    ;; (arg-c
+		    ;;  (push (third argstack-types) types)
+		    ;;  (push '(builtin arg-c) commands))
+		    ;; (arg-d
+		    ;;  (push (fourth argstack-types) types)
+		    ;;  (push '(builtin arg-d) commands))
 		    (otherwise
 		     (if (or (member 'fun (loop for i from 1 to (length args) collect (pop types)))
 			     (nth 3 full))
@@ -892,19 +914,27 @@
 ;; told us to, or because compressed-to-commands told us to.
 ;; Before we do anything, we check if the block is a special type which
 ;; modifies the stack. If it is, we make the operation.
-(defun uncompress-body (fnid block-kinds input stack decompressor)
+(defun uncompress-body (fnid block-kinds input args stack decompressor)
 ;  (if (not (eq fnid 'fn-1)) (push '*restoring block-kinds))
 ;  (format t "DO I DO IT? ~a!!!" (member '*exploding block-kinds))
+  (setf args (loop for el in args collect el))
+
   (if (member '*exploding block-kinds)
-      (with-forced (pop stack) list 
+      (with-forced (pop args) list 
 	(loop for x across (reverse list) do
-	     (push x stack))))
+	     (push x args))))
+
+  (setf stack (append args stack))
 
 ;  (format t "~%STAK IS NOW ~a" stack)
 ;  (format t "KIND IS ~a" block-kinds)
+;  (format t "When I am called, ~a ~a~%" args argument-restore-stack)
 
   (let* ((types (mapcar #'typeof stack))
-	 (uncompressed-code (funcall decompressor input types fnid))
+	 (restore (append args (if (member '*no-arguments block-kinds)
+				   (cadr argument-restore-stack)
+				   (car argument-restore-stack))))
+	 (uncompressed-code (funcall decompressor input restore types fnid))
 	 (defun-part (cdr uncompressed-code))
 	 (ir-part (ir-to-lisp (car uncompressed-code)))
 	 (lambda-part (car ir-part))
@@ -918,16 +948,19 @@
 		   '((with-forced (pop stack) list 
 		       (loop for x across (reverse list) do
 			    (push x stack)))))
+	     
 	     ,@(if (not (member '*no-arguments block-kinds))
 		   `((push (append 
 			    ,(if (member '*exploding block-kinds)
 				 `(coerce (with-forced (car args) list list) 'list)
 				 `args)
 			    (car argument-restore-stack)) argument-restore-stack))
-		   `((pop argument-restore-stack)))
+;		     (format t "push to args ~a~%" argument-restore-stack))
+		   `((pop argument-restore-stack)
+;	       (format t "POP1 ARS ~A~%" argument-restore-stack)
+		     ))
 
 	     ,@lambda-part
-
 
 	     (let ((answer 
 		    (case nret
@@ -936,7 +969,9 @@
 		      (2 (list (pop stack) (pop stack)))
 		      (otherwise (loop for i from 1 to nret collect (pop stack))))))
 	       ,@(if (not (member '*no-arguments block-kinds))
-		     '((pop argument-restore-stack)))
+		     '((pop argument-restore-stack)
+;		       (format t "POP2 ARS ~A~%" argument-restore-stack)
+		       ))
 	       ,@(if (member '*restoring block-kinds)
 		     '((setf stack (pop restore-stack))))
 
@@ -967,15 +1002,19 @@
 	 (restore-stack '()))
      ,(cons 'progn (create-defuns (parse-and-split commands)))
      (funcall #'fn-1 0 nil)
-     stack))
+     (mapcar #'repl-print stack)))
 
-;; Turn a nested list of commands in to a set of bytes which are very
+;; Turn a nested list of commands in to a set of bits which are very
 ;; dense, yet still represent the same information.
-;;   1. Flatten out the data.
+;;   1. Arithmetic encode each function.
+;;   2. Prefix the function by the word "function" and its length.
+;;   3. Add the bits of the function to the outer function.
+;;   4. Recurse.
 (defun list-to-bytes (list)
+  (print list)
 ;  (format t "~%AAAAAA ~a" list)
   (labels ((prepare (function-tree)
-	     (print function-tree)
+;	     (print function-tree)
 	       (append
 		(reduce #'append
 			(mapcar
@@ -1009,11 +1048,11 @@
 		 (loop for elt in flat-function collect
 		      (case (car elt)
 			(int
-			 `(((funs) 1) ((int) 1) ((other) 7)))
+			 `(((funs) 1) ((int) 1) ((other) 8)))
 			(fun
 ;			 (format t "asdfasdfadsf ~a ~a" elt (make-function-weights))
 			   `(,@(make-function-weights)
-			       ((other) 8)))
+			       ((other) 9)))
 			(geometric-number
 			 `(:geometric-mode 9/10))
 			(single-bit
@@ -1022,7 +1061,7 @@
 			 (let ((count (cdadr elt)))
 			   `((functhing ,count) (integers ,count)
 			     ,@(loop for i from 0 to (1- count) collect
-				    `((builtin (,i . ,count)) 7))))))))))))
+				    `((builtin (,i . ,count)) 8))))))))))))
 ;			     ((eof) ,count))))
 ;			(eof
 ;			 `(((stuff) 9) ((eof) 1))))))))))
@@ -1086,7 +1125,7 @@
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
 	(setf (symbol-function 'decompress) #'commands-to-commands)
-	(let ((answer (mapcar #'repl-print (eval (run-compiled tagged init-stack)))))
+	(let ((answer (eval (run-compiled tagged init-stack))))
 	  (cons answer (list-to-bytes (drop-last (do-replace tagged *compiled-code*)))))))))
 
 ;; Run the program by first compiling it, then running it.
@@ -1100,8 +1139,7 @@
 	    (/ (length compiled) 8.0))
 ;    (print answer)
     (setf (symbol-function 'decompress) #'compressed-to-commands)
-    (let ((run-answer (mapcar #'repl-print 
-			      (time (eval (run-compiled (bytes-to-list compiled) init-stack))))))
+    (let ((run-answer (time (eval (run-compiled (bytes-to-list compiled) init-stack)))))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
       (assert (equalp answer run-answer))
       run-answer)))
@@ -1225,3 +1263,4 @@
 ;; ..59..34.
 ;; 8.....9..
 
+;; [12 1 range (add) map]
