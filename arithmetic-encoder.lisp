@@ -124,14 +124,28 @@
 	(cons res (arithmetic-decode-loop number weighted-possible))
 	(list res))))
 
-;(trace arithmetic-decode)
-;(trace arithmetic-decode-loop)
+(defclass compressed-data nil
+    ((data :accessor get-compressed-data :initarg :data)
+     (remaining :accessor get-remaining :initarg :remaining)
+     (next-data :accessor get-next-data :initform nil)
+     (next-size :accessor get-next-size :initform 0)))
 
-;(let ((x (list '((1 60) (2 20) (3 10) (4 10)))))
-;  (setf (cdr x) x)
-;  (let* ((e (arithmetic-encode (loop for i from 1 to 2 append '(1 3 1 3 1 3 2 2 2 4)) x))
-;	 (d (arithmetic-decode-loop (arithmetic-decode-preprocess e) (car x))))
-;    (print e)
-;    (print d)))
+(defmethod make-compressed-data (data)
+  (make-instance 'compressed-data 
+		 :data (arithmetic-decode-preprocess data)
+		 :remaining (expt 2 (length data))))
 
-;(loop for i from 1 to 5 collect 2)
+(defmethod uncompress-once-from ((comp compressed-data) weights)
+  (let ((decdata (arithmetic-decode (get-compressed-data comp) weights)))
+    (setf (get-next-data comp) (first decdata))
+    (setf (get-next-size comp) (second decdata))
+    (third decdata)))
+
+(defmethod use-up-data ((comp compressed-data))
+  (setf (get-compressed-data comp) (get-next-data comp))
+  (setf (get-remaining comp) (* (get-remaining comp) (get-next-size comp))))
+
+(defmethod has-more-data ((comp compressed-data))
+  (< 3.33 (log (get-remaining comp) 2)))
+
+

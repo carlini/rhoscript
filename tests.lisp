@@ -1,18 +1,21 @@
-(defmacro test (name answer &body body)
-; ((comp (compress-code '(5 range permutations))))
-;  (print (eval (do-compile comp))))
-;  `(let ((it (car (eval (do-compile (compress-code ',body))))))
-  `(let ((it (car (run ',body))))
-     (if (equalp
-	  ,answer
-	  it)
-	 (print ,(concatenate 'string "Test Passes: " name))
-	 (progn
-	   (print "-------")
-	   (print ,(concatenate 'string "Test Fails: " name))
-	   (print `(got ,it expected ,,answer))
-	   (print "-------")
-	   (assert nil)))))
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun test-with-stack-fn (name answer stack body)
+    `(let ((it (car (run ',body ',stack))))
+       (if (equalp
+	    ,answer
+	    it)
+	   (print ,(concatenate 'string "Test Passes: " name))
+	   (progn
+	     (print "-------")
+	     (print ,(concatenate 'string "Test Fails: " name))
+	     (print `(got ,it expected ,,answer))
+	     (print "-------")
+	     (assert nil)))))
+  (defmacro test (name answer &body body)
+    (test-with-stack-fn name answer nil body))
+  (defmacro test-with-stack (name answer stack &body body)
+    (test-with-stack-fn name answer stack body)))
+
 
 (test "Push a number" 3
   3)
@@ -35,7 +38,10 @@
 (test "Mod" 7
   107 10 mod)
 
-(test "Stack" 1
+(test "Stack 2" 1
+  1 2 3 rot rot)
+
+(test "Stack 3" 1
   2 4 swap divide 3 4 unrot rot rot add swap subtract 2 drop)
 
 (test "Call" 5
@@ -119,7 +125,10 @@
 (test "Five queens 1" 10
   5 range permutations (with-index dup outer flatten (flatten) map (*restoring *exploding arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length)
 
-(test "Five queens 2" 10
-  5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length)
+(test-with-stack "Five queens 2" 10 (5)
+  dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length)
 
+(test-with-stack "Partial sudoku" '(6 5 5 7 5 8 5 4 4 7 7 7 7 4 7 5 6 6 6 6 6 7 6 8 7 7 7 5 5 4 8 4 5 6 6 6 5 5 4 8 4 5 5 5 6 6 6 6 8 6 7 6 5 6 6 8 6 8 6 7 7 7 7 6 7 6 6 5 7 7 7 7 5 5 5 7 4 6 6 6 6)
+    ((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0)))))
+    (dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force)
 

@@ -1,19 +1,3 @@
-(defparameter *times* (make-hash-table))
-
-(defmacro mydefun (name args &body body)
-  (let ((sym (gensym)) (sym2 (gensym)))
-    `(defun ,name ,args
-       (let ((,sym2 (get-internal-real-time)))
-	 (let ((,sym
-		(progn
-		  ,@body)))
-	   (if (gethash ',name *times*)
-	       (setf (gethash ',name *times*) (+ (gethash ',name *times*) 
-						(- (get-internal-real-time) ,sym2)))
-	       (setf (gethash ',name *times*) (- (get-internal-real-time) ,sym2)))
-;	   (format t "~%Function call ~a took ~a." ',name (- (get-internal-real-time) ,sym2))
-	   ,sym)))))
-
 (defun new-array () (make-array 0 :adjustable t :fill-pointer 0))
 
 (defun to-array (list)
@@ -473,10 +457,6 @@
        (with-forced l list
 	 list
 	 l))
-;  (cmd force-1 ((list l)) (list)
-;       (if (not (null (cdr l)))
-;	   (funcall (cdr l)))
-;       l)
 
 ; fun
   (cmd call ((fun f)) ()
@@ -618,9 +598,11 @@
 			commands)))
 		   (referenced-commands (body)
 		     (if (listp body)
-			 (cons (car body) (reduce #'append 
-						  (mapcar #'referenced-commands 
-							  (cdr body)))))))
+			 (if (listp (car body))
+			     (reduce #'append (mapcar #'referenced-commands body))
+			     (cons (car body) (reduce #'append 
+						      (mapcar #'referenced-commands 
+							      (cdr body))))))))
 	    (ignore-redefun
 	      (defun ,fnid (nret args)
 		(if first
@@ -698,12 +680,10 @@
 ;; The blob of compressed data can be represented any way, as long as it is tagged
 ;; with 'decode-me. A precondition of this is that there actually exists more data.
 (defun extract-next-token (input types)
-;  (format t "~%INPUT TO NEXT TOKEN ~a~%" input)
-;  (print input)
-;  (format t "~%TESTREMF ~a ~a" (> 1 (nth 2 (car (last input)))) (log (nth 2 (car (last input))) 2))
-  (if (< 3.33 (log (nth 2 (car (last input))) 2))
-  (let* ((not-yet-decoded (cdar (last input)))
-	 (possible-commands
+  (setf input (caar input))
+
+  (if (has-more-data input)
+  (let* ((possible-commands
 	      (mapcar #'car 
 		      (remove-if-not 
 		       (lambda (x) (is-subset-of types (cadr x))) *command-info*)))
@@ -712,66 +692,34 @@
 		    (it-is-an-integer ,count)
 		    ,@(loop for i from 0 to (1- count) 
 			 collect `((builtin (,i . ,count)) 8))))
-;		    ((eof) ,count)))
-	 (next-block (arithmetic-decode (car not-yet-decoded) weights))
-	 (next-input (first next-block))
-	 (expand-amount (second next-block))
-	 (next-token (third next-block)))
-;    (print "BLOCK")
-;    (print not-yet-decoded)
-;    (print next-token)
-;    (print next-block)
+	 (next-token (uncompress-once-from input weights)))
     (when (eq next-token 'it-is-an-integer)
-	(setf (second not-yet-decoded) (* (second not-yet-decoded) (second next-block)))
-	(setf next-block (arithmetic-decode next-input '(:geometric-mode 9/10)))
-	(setf next-input (first next-block))
-	(setf expand-amount (second next-block))
-	(setf next-token (list 'int (third next-block))))
+	(use-up-data input)
+	(setf next-token (list 'int (uncompress-once-from input '(:geometric-mode 9/10)))))
     (when (eq (car next-token) 'fun)
-	(setf (second not-yet-decoded) (* (second not-yet-decoded) (second next-block)))
-	(setf next-block (arithmetic-decode next-input '(:geometric-mode 9/10)))
-	(setf next-input (first next-block))
-	(setf expand-amount (second next-block))
-	(setf next-token (list 'compressed-function (third next-block) (second next-token))))
-;    (format t "~%Next Token ~a Next Input ~a~%" next-token next-input)
-;    (print not-yet-decoded)
+	(use-up-data input)
+	(setf next-token (list 'compressed-function
+			       (uncompress-once-from input '(:geometric-mode 9/10))
+			       (second next-token)))) ; *restoring, or *exploding, or other
     (case (car next-token)
       (compressed-function
        (let ((resulting-bits nil))
+	 (use-up-data input)
 	 (loop for i from 1 to (second next-token) do
-	      (let* ((both-parts (arithmetic-decode next-input '((0 1) (1 1))))
-		     (input-part (first both-parts))
-		     (bit-part (third both-parts)))
-		(setf (second not-yet-decoded) (* (second not-yet-decoded) (second both-parts)))
-		(setf next-input input-part)
-		(push bit-part resulting-bits)))
-	 (setf (car not-yet-decoded) next-input)
-	 (setf (second not-yet-decoded) (* (second not-yet-decoded) (second next-block)))
-;	 (format t "~%BITS ARE ~a~%" (reverse resulting-bits))
-;	 (print next-input)
-;	 (format t "DEFINING FUNCTION WITH ~a" next-token)
+	      (let* ((next-token (uncompress-once-from input '((0 1) (1 1)))))
+		(use-up-data input)
+		(push next-token resulting-bits)))
 	 (list 'fun-as-list 
-	       (list (list 'decode-me 
-;			  (cdr (loop for i from 1 to (cadr next-token) collect 
-;				    (pop (car not-yet-decoded))))))
-			   (arithmetic-decode-preprocess (reverse resulting-bits))
-			   (expt 2 (length resulting-bits))))
-	      (third next-token))))
-;       (pop not-yet-decoded))
+	       (make-compressed-data (reverse resulting-bits))
+	       (third next-token))))
       (builtin
        (let ((cmd (do-decode (cadr next-token) types)))
-	 (when cmd
-	   (setf (car not-yet-decoded) next-input)
-	   (setf (second not-yet-decoded) (* (second not-yet-decoded) expand-amount))
-;	   (pop (car not-yet-decoded))
-	   (list 'builtin cmd))))
-;      (eof
-;       (format t "IT IS EOF")
-;       (assert nil)
-;       nil)
+	 (if cmd
+	     (progn
+	       (use-up-data input)
+	       (list 'builtin cmd)))))
       (int
-       (setf (car not-yet-decoded) next-input)
-       (setf (second not-yet-decoded) (* (second not-yet-decoded) expand-amount))
+       (use-up-data input)
        next-token)
       (otherwise
        (error "oh noes"))))
@@ -780,15 +728,8 @@
 ;; Checks if there is actually any remaining work to do, and if there is
 ;; returns a 'decode-me containing it.
 (defun remaining-work (input)
-;  (let* ((arth (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1))))
-;	 (remwork (* (nth 2 (car (last input))) (second arth))))
-;    (if (not (equalp 'x (third arth)))
-;	(format t "~%TESTREMT ~a ~a" (> 3.33 (log remwork 2)) (log remwork 2))))
-;   (when (equalp 'x (third (arithmetic-decode (cadr (car (last input))) '((x 9) (end 1)))))
-;     input))
-;  (print (log (nth 2 (car (last input))) 2))
-  (when (< 3.33 (log (nth 2 (car (last input))) 2))
-    input))
+  (if (has-more-data (caar input))
+      input))
 
 ;; Decodes a blob of compressed data to some commands by lookking at the stack.
 ;; Uses very basic static analysis to decode as many commands at once as possible.
@@ -828,7 +769,7 @@
 			 (full (assoc decoded *command-info*))
 			 (args (cadr full))
 			 (results (caddr full)))
-		  (case (cadr cmd)
+		  (case decoded
 		    (dup
 		     (push (car types) types)
 		     (push '(builtin dup) commands))
@@ -837,18 +778,30 @@
 		       (push a types)
 		       (push b types))
 		     (push '(builtin swap) commands))
-		    ;; (arg-a
-		    ;;  (push (first argstack-types) types)
-		    ;;  (push '(builtin arg-a) commands))
-		    ;; (arg-b
-		    ;;  (push (second argstack-types) types)
-		    ;;  (push '(builtin arg-b) commands))
-		    ;; (arg-c
-		    ;;  (push (third argstack-types) types)
-		    ;;  (push '(builtin arg-c) commands))
-		    ;; (arg-d
-		    ;;  (push (fourth argstack-types) types)
-		    ;;  (push '(builtin arg-d) commands))
+		    (rot
+		     (let ((a (pop types)) (b (pop types)) (c (pop types)))
+		       (push a types)
+		       (push c types)
+		       (push b types))
+		     (push '(builtin rot) commands))
+		    (unrot
+		     (let ((a (pop types)) (b (pop types)) (c (pop types)))
+		       (push b types)
+		       (push a types)
+		       (push c types))
+		     (push '(builtin unrot) commands))
+		    (arg-a
+		     (push (first argstack-types) types)
+		     (push '(builtin arg-a) commands))
+		    (arg-b
+		     (push (second argstack-types) types)
+		     (push '(builtin arg-b) commands))
+		    (arg-c
+		     (push (third argstack-types) types)
+		     (push '(builtin arg-c) commands))
+		    (arg-d
+		     (push (fourth argstack-types) types)
+		     (push '(builtin arg-d) commands))
 		    (otherwise
 		     (if (or (member 'fun (loop for i from 1 to (length args) collect (pop types)))
 			     (nth 3 full))
@@ -888,7 +841,8 @@
 	  (fun-as-list
 	   (let ((id (fresh-fun-name)))
 	     (push
-	      (car (create-defuns (list (cons id (list (cadr decoded)))) (caddr decoded))) 
+	      (car (create-defuns (list (cons id (list (list (list (cadr decoded)))))) 
+				  (caddr decoded))) 
 	      defuns)
 	     `(push #',id stack)))
 	  (list
@@ -908,7 +862,6 @@
       input)
      defuns)))
 
-
 ;; Returns a lambda which runs the full program given by the input.
 ;; We may need to define some new functions either because ir-to-lisp
 ;; told us to, or because compressed-to-commands told us to.
@@ -920,15 +873,19 @@
   (setf args (loop for el in args collect el))
 
   (if (member '*exploding block-kinds)
-      (with-forced (pop args) list 
-	(loop for x across (reverse list) do
-	     (push x args))))
+      (if args
+	  (with-forced (pop args) list 
+	    (loop for x across (reverse list) do
+		 (push x args)))))
 
   (setf stack (append args stack))
 
-;  (format t "~%STAK IS NOW ~a" stack)
-;  (format t "KIND IS ~a" block-kinds)
-;  (format t "When I am called, ~a ~a~%" args argument-restore-stack)
+  (if (member '*exploding block-kinds)
+      (if (not args)
+	  (with-forced (pop stack) list 
+	    (loop for x across (reverse list) do
+		 (push x stack)))))
+
 
   (let* ((types (mapcar #'typeof stack))
 	 (restore (append args (if (member '*no-arguments block-kinds)
@@ -1011,7 +968,6 @@
 ;;   3. Add the bits of the function to the outer function.
 ;;   4. Recurse.
 (defun list-to-bytes (list)
-  (print list)
 ;  (format t "~%AAAAAA ~a" list)
   (labels ((prepare (function-tree)
 ;	     (print function-tree)
@@ -1071,13 +1027,8 @@
 
 ;; From the compressed bytes, return a list of how to run them.
 (defun bytes-to-list (bytes)
-  (let* ((encoded (arithmetic-decode-preprocess bytes)))
-;	 (first-block (arithmetic-decode encoded '(((fun-start ()) 1/2) (fun-end 1/2) (rest 9))))
-;	 (encoded-rest (car first-block))
-;	 (decoded (cdr first-block)))
-;    (print decoded)
-;    (assert (equalp decoded '(fun-start ())))
-    (list 'fun (list (list 'decode-me encoded (expt 2 (length bytes)))))))
+  (let* ((encoded (make-compressed-data bytes)))
+    (list 'fun (list (list encoded)))))
 
 ;; Converts the high-level language to commands tagged by their type.
 (defun add-types-to-user-input (input)
@@ -1184,11 +1135,11 @@
 
 ;(with-open-file (stream "/tmp/pipe")
 ;    (loop for line = (read-line stream nil) until (null line) do
-;	  (compile-by-running (read-from-string (concatenate 'string "(" line " pp)")))))
+;	  (read-from-string (concatenate 'string "(" line " print)"))))
 ;	  (print line)))
 ;	  (if (and (not (eq line :end)) (not (equalp line "")))
 ;	      (let ((to-run (read-from-string line)))
-;		(print to-run)))))
+;		(print to-run))))
 
 ;(time
 ;[5 range prefixes force 5 range suffixes force zip (*exploding concatenate) map (sum) map force])
