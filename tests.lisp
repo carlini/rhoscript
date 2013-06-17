@@ -89,6 +89,9 @@
 (test "Basic restoring" 3
   3 (*restoring 5) call)
 
+(test "Restoring saves correctly" '(0 1 2 3 4)
+  5 range dup (*restoring get) map 1 swap)
+
 (test "Arguments are half-lexically scoped" '(0 1 2 3 4)
   5 range dup (*restoring arg-b arg-a get) map 1 swap force)
 

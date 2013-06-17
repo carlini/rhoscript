@@ -1,3 +1,5 @@
+(load "arithmetic-encoder.lisp")
+
 (defun new-array () (make-array 0 :adjustable t :fill-pointer 0))
 
 (defun to-array (list)
@@ -161,6 +163,9 @@
 
 (commands
 ; type
+  (cmd unsure ((type other)) (type)
+       (let ((x other))
+	 x))
   (cmd dup ((type other)) (type type)
        "Duplicates the top element of the stack."
        (list other other))
@@ -244,6 +249,9 @@
   (cmd divide ((int a) (int b)) (int)
        "Divides from the second-to-top by the top of the stak."
        (floor (/ b a)))
+  (cmd pow ((int a) (int b)) (int)
+       "Multiplies the top two elements onf the stack."
+       (expt b a))
   (cmd mod ((int a) (int b)) (int)
        "Computes the remainder of the second-to-top when divided by the top of the stak."
        (mod b a))
@@ -519,7 +527,6 @@
 ;; These are the stacks we're going to work with. They need to be
 ;; dynamically scoped so that lisp doesn't complain when we (eval) code.
 (defvar stack nil)
-(defvar restore-stack nil)
 (defvar argument-restore-stack nil)
 
 ;; Compute the type of an element that is on the stack.
@@ -577,6 +584,21 @@
 (defun fresh-fun-name ()
   (intern (concatenate 'string "DYN-FN-" (write-to-string (incf *fun-count*)))))
 
+(defun keep-only (commands body)
+  (labels ((referenced-commands (body)
+	     (if (listp body)
+		 (if (listp (car body))
+		     (reduce #'append (mapcar #'referenced-commands body))
+		     (cons (car body) (reduce #'append 
+					      (mapcar #'referenced-commands 
+						      (cdr body))))))))
+    
+    (let ((refed (referenced-commands body)))
+      (remove-if-not 
+       (lambda (x)
+	 (member (car x) refed))
+       commands))))
+
 ;; Create a set of lisp defuns that actually let the code run. Each defun
 ;; initially just uncompresses the code it contains, and then from then on
 ;; when called actually executes the code.
@@ -590,30 +612,16 @@
 	    (push (cadr (car body)) more-block-kinds)
 	    (setf body (cdr body)))
        `(let ((first t))
-	  (labels ((keep-only (commands body)
-		     (let ((refed (referenced-commands body)))
-		       (remove-if-not 
-			(lambda (x)
-			  (member (car x) refed))
-			commands)))
-		   (referenced-commands (body)
-		     (if (listp body)
-			 (if (listp (car body))
-			     (reduce #'append (mapcar #'referenced-commands body))
-			     (cons (car body) (reduce #'append 
-						      (mapcar #'referenced-commands 
-							      (cdr body))))))))
-	    (ignore-redefun
-	      (defun ,fnid (nret args)
-		(if first
-		    (let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
-						     ',body args stack #'decompress))
-			   (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) fn-body))))
-		      (setf first nil)
-		      (setf (symbol-function ',fnid) fn-lambda)
-		      (setf (symbol-function ',(with-under fnid)) fn-lambda)
-		      (funcall fn-lambda nret args))
-		    (funcall #',(with-under fnid) nret args))))))))
+	  (defun ,fnid (nret args)
+	    (if first
+		(let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
+						 ',body args stack #'decompress))
+		       (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) fn-body))))
+		  (setf first nil)
+		  (setf (symbol-function ',fnid) fn-lambda)
+		  (setf (symbol-function ',(with-under fnid)) fn-lambda)
+		  (funcall fn-lambda nret args))
+		(funcall #',(with-under fnid) nret args))))))
    defuns))
 
 ;; A generic decompressor which does nothing.
@@ -809,11 +817,47 @@
 			 (setf types (append results types)))
 		     (push (list 'builtin decoded) commands))))))
 	       (if (remaining-work input)
-		 (let ((new-name (intern (concatenate 'string 
-						      (symbol-name fnid) "P"))))
+		 (let* ((new-name (intern (concatenate 'string 
+						       (symbol-name fnid) "P"))))
+;			(new-name-maker (intern (concatenate 'string 
+;							     (symbol-name new-name) "-MAKER"))))
 		   (setf cont nil)
 		   (push (list 'fun new-name) commands)
 		   (push '(builtin call) commands)
+		   ;; (push `(verbatim 
+		   ;; 	   (progn
+		   ;; 	     (funcall #',new-name-maker)
+		   ;; 	     (funcall #',new-name)))
+		   ;; 	 commands)
+		   ;; (setf defun-part
+		   ;; 	 `(defun ,new-name-maker ()
+		   ;; 	    (format t "it is being run ~a~%" stack)
+		   ;; 	    (let* ((uncompressed-code (compressed-to-commands ',input ',restore-args (mapcar #'typeof stack) ',new-name))
+		   ;; 		   (defun-part (cdr uncompressed-code))
+		   ;; 		   (ir-part (ir-to-lisp (car uncompressed-code)))
+		   ;; 		   (lambda-part (lisp-optimize (car ir-part)))
+		   ;; 		   (defun-part-2 (cdr ir-part))
+		   ;; 		   (real-program
+		   ;; 		    (if defun-part 
+		   ;; 			(if defun-part-2
+		   ;; 			    `(progn
+		   ;; 			       ,defun-part
+		   ;; 			       ,@defun-part-2
+		   ;; 			       ,@lambda-part)
+		   ;; 			    `(progn
+		   ;; 			       ,defun-part
+		   ;; 			       ,@lambda-part))
+		   ;; 			(if defun-part-2
+		   ;; 			    `(progn
+		   ;; 			       ,@defun-part-2
+		   ;; 			       ,@lambda-part)
+		   ;; 			    `(progn
+		   ;; 			       ,@lambda-part)))))
+			      
+		   ;; 	      (format t "the program continuation is ~a~%" real-program)
+		   ;; 	      (eval (list 'defun ',new-name nil 
+		   ;; 			   (list 'labels (keep-only *commands* real-program) 
+		   ;; 				 real-program))))))
 		   (setf defun-part 
 			 (car 
 			  (create-defuns
@@ -834,6 +878,8 @@
      (mapcar
       (lambda (decoded)
 	(case (car decoded)
+	  (verbatim
+	   (cadr decoded))
 	  (int
 	   `(push ,(cadr decoded) stack))
 	  (fun
@@ -861,6 +907,19 @@
 		  `(setq stack (append ,the-command stack)))))))))
       input)
      defuns)))
+
+(defun lisp-optimize (code)
+;  (format t "~a~%" code)
+  code)
+
+(defmacro maybe-replace-stack (test &body rest)
+  `(if ',test
+       (let ((stack (append args (car argument-restore-stack))))
+	 ,@rest)
+       (progn
+	 (setf stack (append args stack))
+	 ,@rest)))
+
 
 ;; Returns a lambda which runs the full program given by the input.
 ;; We may need to define some new functions either because ir-to-lisp
@@ -894,13 +953,11 @@
 	 (uncompressed-code (funcall decompressor input restore types fnid))
 	 (defun-part (cdr uncompressed-code))
 	 (ir-part (ir-to-lisp (car uncompressed-code)))
-	 (lambda-part (car ir-part))
+	 (lambda-part (lisp-optimize (car ir-part)))
 	 (defun-part-2 (cdr ir-part))
 	 (final-part
 	  `(lambda (nret args)
-	     ,@(if (member '*restoring block-kinds)
-		   '((push stack restore-stack)))
-	     (setq stack (append args stack))
+	     (maybe-replace-stack ,(member '*restoring block-kinds)
 	     ,@(if (member '*exploding block-kinds)
 		   '((with-forced (pop stack) list 
 		       (loop for x across (reverse list) do
@@ -929,10 +986,8 @@
 		     '((pop argument-restore-stack)
 ;		       (format t "POP2 ARS ~A~%" argument-restore-stack)
 		       ))
-	       ,@(if (member '*restoring block-kinds)
-		     '((setf stack (pop restore-stack))))
 
-	       answer))))
+	       answer)))))
     (if defun-part 
 	(if defun-part-2
 	    `(progn
@@ -951,12 +1006,10 @@
 ;; Returns the full expanded lisp code which runs some commands.
 (defun run-compiled (commands init-stack)
   (setf stack nil)
-  (setf restore-stack nil)
   (setf argument-restore-stack nil)
   (make-commands)
   `(let ((stack ',init-stack)
-	 (argument-restore-stack '())
-	 (restore-stack '()))
+	 (argument-restore-stack '()))
      ,(cons 'progn (create-defuns (parse-and-split commands)))
      (funcall #'fn-1 0 nil)
      (mapcar #'repl-print stack)))
@@ -1081,6 +1134,7 @@
 
 ;; Run the program by first compiling it, then running it.
 (defun run (i &optional (init-stack nil))
+;  (ignore-redefun
   (format t "~%Run the program ~a" i)
   (let* ((answer-and-compiled (compile-by-running i init-stack))
 	 (answer (car answer-and-compiled))
@@ -1186,7 +1240,7 @@
 ;       (stream (sb-bsd-sockets:socket-make-stream socket :input t :output t))) 
 ;  (sockint::bind (sb-bsd-sockets:socket-file-descriptor socket) "/tmp/q" 5))
 
-;; (with-open-file (stream "/tmp/pipe")
+;; (with-open-file (stream "/tmp/intolisp")
 ;;   (let ((result nil))
 ;;     (loop while t do
 ;; 	 (let ((chr (read-char-no-hang stream)))
@@ -1194,10 +1248,28 @@
 ;; 	   (when chr
 ;; 	     (if (eq chr #\~)
 ;; 		 (when (remove-if (lambda (x) (or (eq x #\ ) (eq x #\Newline))) result)
-;; 		   (print (read-from-string (concatenate 'string (reverse result) nil)))
+;; 		   (let ((s (read-from-string (concatenate 'string (reverse result) nil))))
+;; 		     (if (not (equalp s 'done))
+;; 			 (compile-by-running s))
 ;; 		   (setf result nil))
 ;; 		 (push chr result)))))))
 
+
+(defun sdfsdf ()
+  (handler-bind ((style-warning #'muffle-warning))
+    (with-open-file (stream "/tmp/intolisp")
+		    (let ((code (compile-by-running 
+				 (read-from-string (read-line stream))
+				 nil)))
+		      (format t "Stack dump:~%")
+		      (loop for el in (car code) for i from 0 do
+			    (format t "   ~a. ~a~%" i el))
+		      (format t "~%")
+		      (format t "Compiled Code (~a bits): ~{~a~}~%" (length (cdr code)) (cdr code))))))
+
+
+;;(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'sdfsdf)
+;(run '(5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter force length))
 
 ;; (run '((dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
 
@@ -1215,3 +1287,7 @@
 ;; 8.....9..
 
 ;; [12 1 range (add) map]
+
+
+; 1.28
+;(run '(200 (*restoring (dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) call-n-times) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
