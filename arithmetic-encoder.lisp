@@ -49,6 +49,7 @@
 				      while (not (equalp (car el) element))
 				      sum (cadr el)))
 		 (setf this-weight (cadr (assoc element weighted-possible :test 'equalp)))))
+;	   (print element)
 	   (assert (numberp this-weight))
 	   (assert (> this-weight 0))
 ;	   (format t "~%ENCODE WEIGHTS ~a, ~a and ~a~%" total-weight lower-weight this-weight)
@@ -123,6 +124,15 @@
     (if (not (eq res (caar (last weighted-possible))))
 	(cons res (arithmetic-decode-loop number weighted-possible))
 	(list res))))
+
+(defun arithmetic-extract-n-bits (input length)
+  (let ((resulting-bits nil))
+    (loop for i from 1 to length do
+	 (let* ((next-token (uncompress-once-from input '((0 1) (1 1)))))
+	   (use-up-data input)
+	   (push next-token resulting-bits)))
+    (reverse resulting-bits)))
+
 
 (defclass compressed-data nil
     ((data :accessor get-compressed-data :initarg :data)

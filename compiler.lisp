@@ -43,8 +43,16 @@
 	       (declare (ignore res))
 	       (case kind
 		 (cmd
-		  `(,(with-under name) 
-		     ,(mapcar #'cadr args) ,@cmd))
+		  (list (with-under name) 
+			(mapcar #'cadr args)
+			`(progn
+;			   (format t "i am running ~a with args ~a and ~a~%"
+;				   ',name
+;				   ',(loop for el in args collect (car el))
+;				   ,(cons 'list (loop for el in args collect (cadr el))))
+			   (let ((res ,@cmd))
+;			     (format t "and returning ~a~%" res)
+			     res))))
 	       ))
 	     (get-args (inp)
 	       (case (car inp)
@@ -95,6 +103,11 @@
 	      (funcall (cdr ,name)))
 	 ,@run))))
 
+(defmacro save-arguments (&body body)
+  `(let ((state (make-state :base-stack stack)))
+     ,@body))
+
+
 ;; A macro to create a new list.
 ;; There are three cases:
 ;;   - initially: code to run before the iteration.
@@ -115,15 +128,16 @@
      ,@(if (assoc 'initially body)
   	   (cdr (assoc 'initially body)))
      (setf (cdr cons-cell)
-	   (let ((stack-copy stack))
+;	   (save-arguments
+;	   (let ((stack-copy stack))
 	     (lambda ()
-	       (let ((argument-restore-stack (list stack-copy)))
+;	       (let ((argument-restore-stack (list stack-copy)))
 ;		 (format t "Set ARS 1 ~A~%" argument-restore-stack)
 		 (if (not (progn ,@(cdr (assoc 'next body))))
 		     (progn
 		       ,@(if (assoc 'finally body)
 			     (cdr (assoc 'finall body)))
-		       (setf (cdr cons-cell) nil)))))))
+		       (setf (cdr cons-cell) nil)))))
      cons-cell))
 
 ;; A macro which creates a new list based off of a previous list.
@@ -141,9 +155,10 @@
      ,@(if (assoc 'initially body)
   	   (cdr (assoc 'initially body)))
      (setf (cdr cons-cell)
-	   (let ((stack-copy stack))
+;	   (let ((stack-copy stack))
+;	   (save-arguments
 	     (lambda ()
-	       (let ((argument-restore-stack (list stack-copy)))
+;	       (let ((argument-restore-stack (list stack-copy)))
 ;		 (format t "Set ARS 2 ~A~%" argument-restore-stack)
 		 (let ((each (list-get ,list-name index)))
 		   (if (eq null-symbol each)
@@ -153,19 +168,11 @@
 			 (setf (cdr cons-cell) nil))
 		       (progn
 			 ,@(cdr (assoc 'next body))
-			 (incf index))))))))
+			 (incf index))))))
      cons-cell))
-
-(defmacro save-arguments (&body body)
-  `(let ((argument-restore-stack (cons stack argument-restore-stack)))
-;     (format t "Set ARS 3 ~A~%" argument-restore-stack)
-     ,@body))
 
 (commands
 ; type
-  (cmd unsure ((type other)) (type)
-       (let ((x other))
-	 x))
   (cmd dup ((type other)) (type type)
        "Duplicates the top element of the stack."
        (list other other))
@@ -178,19 +185,17 @@
   (cmd neq ((type a) (type b)) (bool)
        "Compares the top two elements of the stack for inequality."
        (not (equalp a b)))
-  (cmd drop ((type a)) ()
+  (cmd drop () () :messy
        "Removes the top element of the stack."
-       (declare (ignore a)))
+       ;(declare (ignore a)))
+       (pop stack))
   (cmd print () ()
+       "Pretty-print the enture stack; usefully only for debugging."
        (progn
 	 (format t "Stack dump:~%")
 	 (loop for el in stack for i from 0 do
 	      (format t "   ~a. ~a~%" i el))
 	 (format t "~%")))
-  (cmd p ((type a)) ()
-       (print a))
-  (cmd pp () ()
-       (print stack))
   (cmd rot ((type a) (type b) (type c)) (type type type)
        "Rotates the top three elements: A B C -> B C A"
        (list b c a))
@@ -198,25 +203,26 @@
        "Inverted rotate of the top three elements: A B C -> C A B"
        (list c a b))
   (cmd arg-a () (type)
-       "Pushes the top element of the stack at the time of the last
-        context establishment to the stack."
+       "Pushes the top element of the stack, at the time of the last
+        context establishment, to the stack."
        (car (car argument-restore-stack)))
   (cmd arg-b () (type)
-       "Pushes the second to top element of the stack at the time of the last
-        context establishment to the stack."
+       "Pushes the second to top element of the stack, at the time of the last
+        context establishment, to the stack."
        (cadr (car argument-restore-stack)))
   (cmd arg-c () (type)
-       "Pushes the third to top element of the stack at the time of the last
-        context establishment to the stack."
+       "Pushes the third to top element of the stack, at the time of the last
+        context establishment, to the stack."
        (caddr (car argument-restore-stack)))
   (cmd arg-d () (type)
-       "Pushes the forth to top element of the stack at the time of the last
-        context establishment to the stack."
+       "Pushes the forth to top element of the stack, at the time of the last
+        context establishment, to the stack."
        (cadddr (car argument-restore-stack)))
 
 ; int
-  (cmd pick ((int a)) (type)
-       (nth a stack))
+  (cmd pick ((int n)) (type)
+       "Take the nth element of the stack and duplicate it on the top of the stack."
+       (nth n stack))
   (cmd or ((bool a) (bool b)) (bool)
        "Logical or of the top two elements of the stack."
        (or a b))
@@ -265,6 +271,7 @@
        "Tests if the top of the stack is an odd number."
        (oddp a))
   (cmd gcd ((int a) (int b)) (int)
+       "Compute the greatest common divisor of two integers."
        (let ((tmp 0))
 	 (loop while (and (> a 0) (> b 0)) do
 	      (setf tmp a)
@@ -292,13 +299,14 @@
        ; TODO negative index?
        (list-get l i))
   (cmd substr ((int start) (int end) (list l)) (type)
-       "Indexes in to a list."
+       "Returns a subsequence of the elemtns of a list."
        ; TODO negative index?
        (let ((arr (new-array)))
 	 (loop for i from start to (1- end) do
 	      (vector-push-extend (list-get l i) arr))
 	 (list arr)))
   (cmd combinations ((int size) (list l)) (list)
+       "Compute all of the combinations of a list."
        (with-forced l list
 	 (labels ((combine (lst sz)
 		    (if (eq sz 0)
@@ -341,6 +349,18 @@
        "Find the largest element of a list."
        (with-forced l list
 	 (loop for el across list maximize el)))
+  (cmd arg-min ((list l)) (int)
+       "Find the smallest element of a list."
+       (let ((best (list-get l 0)))
+	 (with-forced l list
+	   (loop for el in
+		(loop for el across list for ii from 0 collect
+		     (if (<= el best)
+			 (progn
+			   (setf best el)
+			   ii)
+			 -1))
+		maximize el))))
   (cmd with-index ((list l)) (list)
        "Returns a new list, where each element is a list of the index and list's element."
        (list-to-list-iter l
@@ -364,6 +384,8 @@
 	  (if (not (eq index 0))
 	      (vector-push-extend each result)))))
   (cmd set-minus ((list takeaway) (list given)) (list)
+       "The set difference of two lists; all of the elements in the second list, execpt
+        for those which occur in the first list."
        (with-forced takeaway forced-takeaway-arr
 	 (let ((forced-takeaway (coerce forced-takeaway-arr 'list)))
 	   (list-to-list-iter given
@@ -371,10 +393,13 @@
 	      (if (not (member each forced-takeaway))
 		  (vector-push-extend each result)))))))
   (cmd any ((list l)) (list)
+       "Tests if any of the elements in a list are true."
        (not (loop for i from 0 until (eq (list-get l i) null-symbol) never (list-get l i))))
   (cmd all ((list l)) (list)
+       "Tests if all of the elements in a list are true."
        (loop for i from 0 until (eq (list-get l i) null-symbol) always (list-get l i)))
   (cmd zip ((list a) (list b)) (list)
+       "Takes two lists and forms a new list, pairing up elements together."
        (let ((i 0))
 	 (creating-new-list
 	  (next
@@ -385,6 +410,8 @@
 		   (vector-push-extend (list (to-array (list e1 e2))) result)
 		   (incf i))))))))
   (cmd transpose ((list l)) (list)
+       "Takes a multi-dimensional list and reverses the order of the first and second axis.
+       That is, if 'some_list i get j get' is the same as 'some_list transpose j get i get'."
        (let ((index 0))
 	 (creating-new-list
 	   (next
@@ -404,9 +431,11 @@
 	      (incf index))))))
 	       
   (cmd length ((list l)) (int)
+       "Compute the length of a list."
        (with-forced l list
 	 (length list)))
   (cmd concatenate ((list a) (list b)) (list)
+       "Concatenate two lists."
        ;; fixmeinfinite
        (let ((res (new-array)))
 	 (with-forced b list
@@ -417,12 +446,14 @@
 		(vector-push-extend (aref list j) res)))
 	 (list res)))
   (cmd prefixes ((list l)) (list)
+       "Compute all of the prefixes of a list."
        (list-to-list-iter l
 	 (initially
 	  (vector-push-extend (list (new-array)) result))
 	 (next
 	  (vector-push-extend (list (subseq (car l) 0 (1+ index))) result))))
   (cmd flatten ((list l)) (list)
+       "Flatten a n-dimensional list to an (n-1)-dimensional list."
        ;; fixmeinfinite
        (list-to-list-iter l
 	 (next
@@ -430,6 +461,7 @@
 	    (loop for el across each-list do
 		 (vector-push-extend el result))))))
   (cmd uniq ((list l)) (list)
+       "Return only the unique elements of a list, order-preserved."
        (let ((seen (make-hash-table :test 'equalp)))
 	 (list-to-list-iter l
 	   (next
@@ -439,6 +471,7 @@
 		  (vector-push-extend each result)))))))
 	  
   (cmd suffixes ((list l)) (list)
+       "Compute all of the suffixes of a list."
        ;; better to not force and present in reversed order?
        (with-forced l list
 	 (let ((length (length list)))
@@ -448,6 +481,7 @@
 	     (finally
 	      (vector-push-extend (list (new-array)) result))))))
   (cmd permutations ((list l)) (list)
+       "Compute all of the permutations of a list."
        (with-forced l list
 	 (labels ((permute (list)
 		    (if (<= (length list) 1)
@@ -462,6 +496,7 @@
 	   (list (to-array (mapcar (lambda (x) (list (to-array x)))
 				   (permute (coerce list 'list))))))))
   (cmd force ((list l)) (list)
+       "Force a list to be evaluated completely."
        (with-forced l list
 	 list
 	 l))
@@ -470,63 +505,80 @@
   (cmd call ((fun f)) ()
        "Takes a function off the stack and runs it."
        (save-arguments
-	(funcall f 0 nil)))
+	 (funcall f state 0 nil)))
+  (cmd call-with-return ((fun f)) (type)
+       "Takes a function off the stack and runs it, returning the top element of the stack."
+       (save-arguments
+	 (funcall f state 1 nil)))
   (cmd map ((fun fn) (list l)) (list)
        "Maps a function over a list. Each element of the new list is the function applied
         to the old element."
+       (save-arguments
        (list-to-list-iter l
 	   (next
 ;	    (print "NEXT ITER")
 ;	    (print stack)
-	    (vector-push-extend (funcall fn 1 (list each)) result))))
+	    (vector-push-extend (funcall fn state 1 (list each)) result)))))
   (cmd filter ((fun fn) (list l)) (list)
        "Returns a new list where only elements where the function returns true are retained."
+       (save-arguments
        (list-to-list-iter l
 	 (next
-	  (if (funcall fn 1 (list each))
-	      (vector-push-extend each result)))))
+	  (if (funcall fn state 1 (list each))
+	      (vector-push-extend each result))))))
   (cmd reduce ((fun fn) (list l)) (type)
+       "Returns a single element which is the result of calling a function on successive
+        elements of a list."
+       (save-arguments
        (let ((init (list-get l 0)))
 	 (with-forced l list
 	   (loop for el across list for i from 0 if (not (eq i 0)) do
-		(setf init (funcall fn 1 (list el init))))
-	   init)))
+		(setf init (funcall fn state 1 (list el init))))
+	   init))))
   (cmd fold ((fun fn) (type init) (list l)) (type)
-       (with-forced l list
-	 (loop for el across list do
-	      (setf init (funcall fn 1 (list el init))))
-	 init))
+       "Identical to reduce, but specifying a different initial value."
+       (save-arguments
+	 (with-forced l list
+	   (loop for el across list do
+		(setf init (funcall fn state 1 (list el init))))
+	   init)))
   (cmd uniq-by ((fun fn) (list l)) (list)
+       "Returns a new list of only the unique elements, using some other predicate than equality."
+       (save-arguments
        (let ((seen nil))
 	 (list-to-list-iter l
 	   (next
 	    (when (not (some (lambda (x) x) 
-			     (mapcar (lambda (x) (funcall fn 1 (list x each))) seen)))
+			     (mapcar (lambda (x) (funcall fn state 1 (list x each))) seen)))
 		(vector-push-extend each result)
-		(push each seen))))))
+		(push each seen)))))))
   (cmd ite ((fun a) (fun b) (bool case)) ()
+       "Run one of two functions based on if the next element on the stack is true or not."
        (save-arguments
 	(if case
-	    (funcall a 0 nil)
-	    (funcall b 0 nil))))
+	    (funcall a state 0 nil)
+	    (funcall b state 0 nil))))
   (cmd if ((fun a) (bool case)) ()
+       "Run a function if the top of the stack is true."
        (save-arguments
 	(if case
-	    (funcall a 0 nil))))
+	    (funcall a state 0 nil))))
   (cmd do-while ((fun fn)) ()
+       "Run a function as long as it returns true from the top of the stack."
        (save-arguments
 	(let ((cont t))
 	  (loop while cont do
-	       (setf cont (funcall fn 1 nil))))))
+	       (setf cont (funcall fn state 1 nil))))))
   (cmd call-n-times ((fun fn) (int n)) ()
        "Runs the top function n times."
        (save-arguments
-	(loop for i from 0 to (1- n) do (funcall fn 0 nil)))))
+	(loop for i from 0 to (1- n) do (funcall fn state 0 nil)))))
 
 
 ;; These are the stacks we're going to work with. They need to be
 ;; dynamically scoped so that lisp doesn't complain when we (eval) code.
 (defvar stack nil)
+(defvar restore-stack nil)
 (defvar argument-restore-stack nil)
 
 ;; Compute the type of an element that is on the stack.
@@ -612,21 +664,21 @@
 	    (push (cadr (car body)) more-block-kinds)
 	    (setf body (cdr body)))
        `(let ((first t))
-	  (defun ,fnid (nret args)
+	  (defun ,fnid (qstate nret args)
 	    (if first
 		(let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
-						 ',body args stack #'decompress))
+						 ',body args stack qstate #'decompress))
 		       (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) fn-body))))
 		  (setf first nil)
 		  (setf (symbol-function ',fnid) fn-lambda)
 		  (setf (symbol-function ',(with-under fnid)) fn-lambda)
-		  (funcall fn-lambda nret args))
-		(funcall #',(with-under fnid) nret args))))))
+		  (funcall fn-lambda qstate nret args))
+		(funcall #',(with-under fnid) qstate nret args))))))
    defuns))
 
 ;; A generic decompressor which does nothing.
-(defun decompress (input args types fnid) 
-  (declare (ignore input args types fnid))
+(defun decompress (input types fnid) 
+  (declare (ignore input types fnid))
   (assert nil))
 
 ;; When we're doing the compilation run, this is where we put all of the
@@ -647,8 +699,7 @@
 ;; A "decompressor" used in compilation run. 
 ;; It turns commands in to commands, but first inspects the stack  and uses this
 ;; information to encode the commands.
-(defun commands-to-commands (input args types fnid)
-  (declare (ignore args))
+(defun commands-to-commands (input types fnid)
   (let ((new-name (intern (concatenate 'string
 				       (symbol-name fnid) "P"))))
     (if (eq (caar input) 'builtin)
@@ -711,14 +762,10 @@
 			       (second next-token)))) ; *restoring, or *exploding, or other
     (case (car next-token)
       (compressed-function
-       (let ((resulting-bits nil))
-	 (use-up-data input)
-	 (loop for i from 1 to (second next-token) do
-	      (let* ((next-token (uncompress-once-from input '((0 1) (1 1)))))
-		(use-up-data input)
-		(push next-token resulting-bits)))
-	 (list 'fun-as-list 
-	       (make-compressed-data (reverse resulting-bits))
+       (use-up-data input)
+       (let ((resulting-bits (arithmetic-extract-n-bits input (second next-token))))
+	 (list 'fun-as-list
+	       (make-compressed-data resulting-bits)
 	       (third next-token))))
       (builtin
        (let ((cmd (do-decode (cadr next-token) types)))
@@ -748,11 +795,10 @@
 ;; If it can't convert the compressed input to decompressed data all at once, it
 ;; pushes on to the stack a continuation representing the rest of the work to do,
 ;; and then pushes the "call" builtin.
-(defun compressed-to-commands (input restore-args types fnid)
+(defun compressed-to-commands (input types fnid)
   (let ((commands nil)
 	(cont t)
-	(defun-part nil)
-	(argstack-types (mapcar #'typeof restore-args)))
+	(defun-part nil))
 ;    (format t "ARGSTACKTYPES ~a~%" restore-args)
     (loop while cont do
 	 (let ((cmd 
@@ -798,18 +844,18 @@
 		       (push a types)
 		       (push c types))
 		     (push '(builtin unrot) commands))
-		    (arg-a
-		     (push (first argstack-types) types)
-		     (push '(builtin arg-a) commands))
-		    (arg-b
-		     (push (second argstack-types) types)
-		     (push '(builtin arg-b) commands))
-		    (arg-c
-		     (push (third argstack-types) types)
-		     (push '(builtin arg-c) commands))
-		    (arg-d
-		     (push (fourth argstack-types) types)
-		     (push '(builtin arg-d) commands))
+		    ;; (arg-a
+		    ;;  (push (first argstack-types) types)
+		    ;;  (push '(builtin arg-a) commands))
+		    ;; (arg-b
+		    ;;  (push (second argstack-types) types)
+		    ;;  (push '(builtin arg-b) commands))
+		    ;; (arg-c
+		    ;;  (push (third argstack-types) types)
+		    ;;  (push '(builtin arg-c) commands))
+		    ;; (arg-d
+		    ;;  (push (fourth argstack-types) types)
+		    ;;  (push '(builtin arg-d) commands))
 		    (otherwise
 		     (if (or (member 'fun (loop for i from 1 to (length args) collect (pop types)))
 			     (nth 3 full))
@@ -912,83 +958,77 @@
 ;  (format t "~a~%" code)
   code)
 
-(defmacro maybe-replace-stack (test &body rest)
-  `(if ',test
-       (let ((stack (append args (car argument-restore-stack))))
-	 ,@rest)
-       (progn
-	 (setf stack (append args stack))
-	 ,@rest)))
+(defun correct-stack (kinds args stack state)
+;  (print 123123)
+;  (print (list args stack))
+;  (print kinds)
+  (let* ((first-pass
+	  (if (member '*restoring kinds)
+	      (append args (state-base-stack state))
+	      (append args stack)))
+	 (second-pass
+	  (if (member '*exploding kinds)
+	     (append (coerce (with-forced (car first-pass) list list) 'list)
+		     (cdr first-pass))
+	     first-pass)))
+;    (format t "passes are ~a ~a~%" first-pass second-pass)
+    second-pass))
 
+(defun uncompress-prefix (kinds)
+  `((push stack restore-stack)
+    ,@(if (member '*no-arguments kinds)
+	  `((pop argument-restore-stack)))
+    (setf stack (correct-stack ',kinds args stack argument-restore-stack))))
+
+(defun uncompress-suffix (kinds)
+  `(
+    ,@(if (member '*restoring kinds)
+      `((setf stack (pop restore-stack)))
+      `((pop restore-stack)))
+    ,@(if (not (member '*no-arguments kinds))
+	  `((pop argument-restore-stack)))))
+
+(defstruct (state
+	     (:conc-name "STATE-"))
+  (base-stack nil))
 
 ;; Returns a lambda which runs the full program given by the input.
 ;; We may need to define some new functions either because ir-to-lisp
 ;; told us to, or because compressed-to-commands told us to.
 ;; Before we do anything, we check if the block is a special type which
 ;; modifies the stack. If it is, we make the operation.
-(defun uncompress-body (fnid block-kinds input args stack decompressor)
-;  (if (not (eq fnid 'fn-1)) (push '*restoring block-kinds))
-;  (format t "DO I DO IT? ~a!!!" (member '*exploding block-kinds))
-  (setf args (loop for el in args collect el))
-
-  (if (member '*exploding block-kinds)
-      (if args
-	  (with-forced (pop args) list 
-	    (loop for x across (reverse list) do
-		 (push x args)))))
-
-  (setf stack (append args stack))
-
-  (if (member '*exploding block-kinds)
-      (if (not args)
-	  (with-forced (pop stack) list 
-	    (loop for x across (reverse list) do
-		 (push x stack)))))
-
-
-  (let* ((types (mapcar #'typeof stack))
-	 (restore (append args (if (member '*no-arguments block-kinds)
-				   (cadr argument-restore-stack)
-				   (car argument-restore-stack))))
-	 (uncompressed-code (funcall decompressor input restore types fnid))
+(defun uncompress-body (fnid block-kinds input args stack state decompressor)
+  (let* ((correct-stack (correct-stack block-kinds args stack state))
+	 (types (mapcar #'typeof correct-stack))
+	 (uncompressed-code (funcall decompressor input types fnid))
 	 (defun-part (cdr uncompressed-code))
 	 (ir-part (ir-to-lisp (car uncompressed-code)))
 	 (lambda-part (lisp-optimize (car ir-part)))
 	 (defun-part-2 (cdr ir-part))
 	 (final-part
-	  `(lambda (nret args)
-	     (maybe-replace-stack ,(member '*restoring block-kinds)
-	     ,@(if (member '*exploding block-kinds)
-		   '((with-forced (pop stack) list 
-		       (loop for x across (reverse list) do
-			    (push x stack)))))
+	  `(lambda (state nret args)
+;	     (declare (ignore state args))
+	     (push stack restore-stack)
+;	     (push state restore-state)
 	     
-	     ,@(if (not (member '*no-arguments block-kinds))
-		   `((push (append 
-			    ,(if (member '*exploding block-kinds)
-				 `(coerce (with-forced (car args) list list) 'list)
-				 `args)
-			    (car argument-restore-stack)) argument-restore-stack))
-;		     (format t "push to args ~a~%" argument-restore-stack))
-		   `((pop argument-restore-stack)
-;	       (format t "POP1 ARS ~A~%" argument-restore-stack)
-		     ))
-
-	     ,@lambda-part
-
-	     (let ((answer 
-		    (case nret
-		      (0 nil)
-		      (1 (pop stack))
-		      (2 (list (pop stack) (pop stack)))
-		      (otherwise (loop for i from 1 to nret collect (pop stack))))))
+	     (let ((corrected (correct-stack ',block-kinds args stack state)))
+	       (setf stack corrected)
 	       ,@(if (not (member '*no-arguments block-kinds))
-		     '((pop argument-restore-stack)
-;		       (format t "POP2 ARS ~A~%" argument-restore-stack)
-		       ))
-
-	       answer)))))
-    (if defun-part 
+		     `((let ((argument-restore-stack (list corrected)))
+			 ,@lambda-part))
+		     lambda-part))
+;	     (format t "stack now ~a 'cause ~a~%" stack ',(member '*restoring block-kinds))
+	     (let ((res (case nret
+			  (0 nil)
+			  (1 (pop stack))
+			  (2 (list (pop stack) (pop stack)))
+			  (otherwise (loop for i from 1 to nret collect (pop stack))))))
+	       ,@(if (member '*restoring block-kinds)
+		     `((setf stack (pop restore-stack)))
+		     `((pop restore-stack)))
+	       res))))
+    
+    (if defun-part
 	(if defun-part-2
 	    `(progn
 	       ,defun-part
@@ -1005,19 +1045,18 @@
 
 ;; Returns the full expanded lisp code which runs some commands.
 (defun run-compiled (commands init-stack)
-  (setf stack nil)
-  (setf argument-restore-stack nil)
   (make-commands)
   `(let ((stack ',init-stack)
+	 (restore-stack nil)
 	 (argument-restore-stack '()))
      ,(cons 'progn (create-defuns (parse-and-split commands)))
-     (funcall #'fn-1 0 nil)
+     (funcall #'fn-1 (make-state) 0 nil)
      (mapcar #'repl-print stack)))
 
 ;; Turn a nested list of commands in to a set of bits which are very
 ;; dense, yet still represent the same information.
 ;;   1. Arithmetic encode each function.
-;;   2. Prefix the function by the word "function" and its length.
+;;   2. Prefix the function by the bits representing a function, and its length.
 ;;   3. Add the bits of the function to the outer function.
 ;;   4. Recurse.
 (defun list-to-bytes (list)
@@ -1186,24 +1225,11 @@
 ;(run '(87))
 ;(run '(1 2))
 
-
-;(with-open-file (stream "/tmp/pipe")
-;    (loop for line = (read-line stream nil) until (null line) do
-;	  (read-from-string (concatenate 'string "(" line " print)"))))
-;	  (print line)))
-;	  (if (and (not (eq line :end)) (not (equalp line "")))
-;	      (let ((to-run (read-from-string line)))
-;		(print to-run))))
-
 ;(time
 ;[5 range prefixes force 5 range suffixes force zip (*exploding concatenate) map (sum) map force])
 
 ;(time
 ;[2 range (1 subtract) map force (*exploding add) call])
-
-
-;(defun run (text)
-;  (eval (run-compiled (compile-by-running text))))
 
 ;(time (loop for i across (caar (run '(8 range permutations (with-index force dup (*exploding *restoring unrot (*exploding *restoring arg-c arg-a eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map force all) map force all) map force))) count i))
 
@@ -1213,18 +1239,6 @@
 ;  [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length])
 
 ;(time [8 range permutations (with-index dup outer flatten (flatten) map (*exploding *restoring arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length])
-;(time
-; [5 range 0 (add) fold])
-
-;(time
-; [3 (2 (4) call-n-times) call-n-times])
-
-; d c abs(a-c) 0=abs(a-c) arg-b
-
-;(run '(5 range (1 add) map force))
-
-
-;[2 range (*exploding add) call]
 
 ;(progn
 ;  (time (run '(8 range permutations (with-index force dup (*exploding *restoring) map force) map force)))   nil)
@@ -1236,39 +1250,21 @@
 ; [5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter force length])
 
 
-;(let* ((socket (make-instance 'sb-bsd-sockets:local-socket :type :stream)) 
-;       (stream (sb-bsd-sockets:socket-make-stream socket :input t :output t))) 
-;  (sockint::bind (sb-bsd-sockets:socket-file-descriptor socket) "/tmp/q" 5))
-
-;; (with-open-file (stream "/tmp/intolisp")
-;;   (let ((result nil))
-;;     (loop while t do
-;; 	 (let ((chr (read-char-no-hang stream)))
-;; ;	   (print chr)
-;; 	   (when chr
-;; 	     (if (eq chr #\~)
-;; 		 (when (remove-if (lambda (x) (or (eq x #\ ) (eq x #\Newline))) result)
-;; 		   (let ((s (read-from-string (concatenate 'string (reverse result) nil))))
-;; 		     (if (not (equalp s 'done))
-;; 			 (compile-by-running s))
-;; 		   (setf result nil))
-;; 		 (push chr result)))))))
-
-
 (defun sdfsdf ()
   (handler-bind ((style-warning #'muffle-warning))
-    (with-open-file (stream "/tmp/intolisp")
-		    (let ((code (compile-by-running 
-				 (read-from-string (read-line stream))
-				 nil)))
+    (with-timeout 1
+      (with-open-file (stream "/tmp/intolisp")
+	(let ((code (compile-by-running 
+		     (read-from-string (read-line stream))
+		     nil)))
 		      (format t "Stack dump:~%")
 		      (loop for el in (car code) for i from 0 do
-			    (format t "   ~a. ~a~%" i el))
+			   (format t "   ~a. ~a~%" i el))
 		      (format t "~%")
-		      (format t "Compiled Code (~a bits): ~{~a~}~%" (length (cdr code)) (cdr code))))))
+		      (format t "Compiled Code (~a bits): ~{~a~}~%" (length (cdr code)) (cdr code)))))))
 
 
-;;(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'sdfsdf)
+;; (sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'sdfsdf)
 ;(run '(5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter force length))
 
 ;; (run '((dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
@@ -1286,8 +1282,25 @@
 ;; ..59..34.
 ;; 8.....9..
 
-;; [12 1 range (add) map]
-
 
 ; 1.28
 ;(run '(200 (*restoring (dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) call-n-times) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
+
+
+(run '((*restoring
+	(dup 3 mod subtract dup 3 add swap) swap ; thing to take n -> [n-n%3, n+3-n%3]
+	9 range dup outer flatten  ; create all paris of ints
+	(*restoring *exploding swap drop get ; get one row
+	 arg-c transpose arg-b get ; get one colum
+	 concatenate ; append them
+	arg-b arg-d call arg-c (*restoring rot substr) map ; get one 3 wide stripe
+	 arg-a arg-d call substr ; get the 3x3 box
+	 flatten rot drop drop concatenate ; add it on to the list
+	 uniq ; take only unique elements
+	 9 range swap set-minus
+	 (*restoring 0 neq) filter force ; remove 0s
+	 ) 
+	map force) ; function which returns the valid moves
+       (*restoring call-with-return (length) map arg-min print)
+       call-with-return)
+     '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))

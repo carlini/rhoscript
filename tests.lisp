@@ -41,6 +41,9 @@
 (test "Stack 2" 1
   1 2 3 rot rot)
 
+(test "Drop" 3
+  3 range 4 drop (0 add) map sum)
+
 (test "Stack 3" 1
   2 4 swap divide 3 4 unrot rot rot add swap subtract 2 drop)
 
@@ -68,6 +71,9 @@
 (test "Permutations values 1" '(10 10)
   5 range permutations (sum) map dup max swap min 2 implode)
 
+(test "argmin" 3
+  10 range (3 subtract dup multiply) map arg-min)
+
 (test "Call-n-times" 98
   5 range (dup (dup add) call-n-times) map sum)
 
@@ -92,6 +98,12 @@
 (test "Restoring saves correctly" '(0 1 2 3 4)
   5 range dup (*restoring get) map 1 swap)
 
+(test "Restoring saves correctly 2" '(12)
+  12 1 range (*restoring add) map)
+
+(test "Map from under" '(12 13 14 15 16)
+  12 5 range (*restoring add) map)
+
 (test "Arguments are half-lexically scoped" '(0 1 2 3 4)
   5 range dup (*restoring arg-b arg-a get) map 1 swap force)
 
@@ -105,7 +117,7 @@
   4 range dup zip (explode add) map force)
 
 (test "Exploding 1" 3
-  2 range (1 add) map (*exploding add) call)
+  2 range (*restoring 1 add) map (*exploding add) call)
 
 (test "Exploding 2" '(0 2 4 6)
   4 range dup zip (*exploding add) map force)

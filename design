@@ -36,6 +36,8 @@ is-positive?
 
 sort-by and arg-sort.
 
+call-and-return-n -- call a function, return the top n arguments.
+
 ---
 Automatic Compression
 ---
