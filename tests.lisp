@@ -56,6 +56,9 @@
 (test "Select Args 2" 3
   1 2 3 4 (arg-a arg-d add arg-c subtract) call)
 
+(test "Select Args 3" 8
+  1 2 3 (4 5 range 6 unsure arg-b add) call)
+
 (test "Range" 10
   5 range sum)
 
@@ -69,7 +72,10 @@
   5 range permutations length)
 
 (test "Permutations values 1" '(10 10)
-  5 range permutations (sum) map dup max swap min 2 implode)
+  5 range permutations (sum) map dup max swap min 2 implode
+
+(test "Nonrestoring is forced" '(2 3 5 8 12 17 23 30 38 47)
+  1 10 range (add dup) map (*restoring inc) map)
 
 (test "argmin" 3
   10 range (3 subtract dup multiply) map arg-min)
@@ -141,7 +147,7 @@
   5 range permutations (with-index dup outer flatten (flatten) map (*restoring *exploding arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length)
 
 (test-with-stack "Five queens 2" 10 (5)
-  dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length)
+  dup range permutations (*restoring with-index dup (*restoring *exploding add) map uniq length arg-b eq swap (*restoring *exploding subtract) map uniq length arg-b eq and) filter length)
 
 (test-with-stack "Partial sudoku" '(6 5 5 7 5 8 5 4 4 7 7 7 7 4 7 5 6 6 6 6 6 7 6 8 7 7 7 5 5 4 8 4 5 6 6 6 5 5 4 8 4 5 5 5 6 6 6 6 8 6 7 6 5 6 6 8 6 8 6 7 7 7 7 6 7 6 6 5 7 7 7 7 5 5 5 7 4 6 6 6 6)
     ((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0)))))

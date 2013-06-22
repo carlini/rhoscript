@@ -50,6 +50,8 @@
 ;				   ',name
 ;				   ',(loop for el in args collect (car el))
 ;				   ,(cons 'list (loop for el in args collect (cadr el))))
+			   ,@(loop for el in args when (eq (car el) 'fun) collect
+				  `(setf ,(cadr el) (fun-on-stack-fun ,(cadr el))))
 			   (let ((res ,@cmd))
 ;			     (format t "and returning ~a~%" res)
 			     res))))
@@ -173,6 +175,9 @@
 
 (commands
 ; type
+  (cmd unsure () () :messy
+       "does nothing"
+       5)
   (cmd dup ((type other)) (type type)
        "Duplicates the top element of the stack."
        (list other other))
@@ -185,10 +190,10 @@
   (cmd neq ((type a) (type b)) (bool)
        "Compares the top two elements of the stack for inequality."
        (not (equalp a b)))
-  (cmd drop () () :messy
+  (cmd drop ((type q)) ()
        "Removes the top element of the stack."
        ;(declare (ignore a)))
-       (pop stack))
+       q)
   (cmd print () ()
        "Pretty-print the enture stack; usefully only for debugging."
        (progn
@@ -589,7 +594,9 @@
     ((eq (type-of el) 'null) 'bool)
     ((listp el) 'list)
     ((vectorp el) 'list)
-    ((functionp el) 'fun)
+;    ((functionp el) 'fun)
+    ((eq (type-of el) 'fun-on-stack)
+     (if (fun-on-stack-is-restoring el) 'fun-restoring 'fun-nonrestoring))
     ((symbolp el) 'builtin)
     (t (error `(this is very bad ,el)))))
 
@@ -601,7 +608,14 @@
     ((null b) t)
     ((null a) nil)
     ((or (equal (car a) 'abort) (equal (car b) 'abort)) nil)
-    ((or (equal (car b) 'type) (equal (car a) (car b)))
+    ((or (equal (car b) 'type)
+	 (and (or (equal (car a) 'fun-restoring)
+		  (equal (car a) 'fun-nonrestoring)
+		  (equal (car a) 'fun))
+	      (or (equal (car b) 'fun-restoring)
+		  (equal (car b) 'fun-nonrestoring)
+		  (equal (car b) 'fun)))
+	 (equal (car a) (car b)))
      (is-subset-of (cdr a) (cdr b)))
     (t nil)))
 
@@ -677,9 +691,16 @@
    defuns))
 
 ;; A generic decompressor which does nothing.
-(defun decompress (input types fnid) 
-  (declare (ignore input types fnid))
+(defun decompress (input types argtypes fnid) 
+  (declare (ignore input types argtypes fnid))
   (assert nil))
+
+
+(defun command-rewriter (command full args)
+  (if (and (equal (caddr full) '(list))
+	   (member 'fun-nonrestoring args))
+      (list command '(builtin force))
+      (list command)))
 
 ;; When we're doing the compilation run, this is where we put all of the
 ;; actual mapping of uncompressed code -> compressed code.
@@ -699,9 +720,13 @@
 ;; A "decompressor" used in compilation run. 
 ;; It turns commands in to commands, but first inspects the stack  and uses this
 ;; information to encode the commands.
-(defun commands-to-commands (input types fnid)
-  (let ((new-name (intern (concatenate 'string
-				       (symbol-name fnid) "P"))))
+(defun commands-to-commands (input types argtypes fnid)
+  (declare (ignore argtypes))
+  (let* ((new-name (intern (concatenate 'string
+					(symbol-name fnid) "P")))
+	 (full-command (assoc (cadr (car input)) *command-info*))
+	 (inputs (loop for el in (cadr full-command) for arg in types 
+		    collect arg)))
     (if (eq (caar input) 'builtin)
 	(progn
 	  (push (append
@@ -710,13 +735,13 @@
 		*compiled-code*)))
     (incf (caddr (car (last input))))
     (if (cddr input)
-	(cons (list (car input)
-		    `(fun ,new-name)
-		    '(builtin call))
+	(cons (append (command-rewriter (car input) full-command inputs)
+		    `((fun ,new-name)
+		      (builtin call)))
 	      (car (create-defuns
 		    (list (list new-name (cons '(fun-modifier *no-arguments)
 					       (cdr input)))))))
-	(list (list (car input))))))
+	(list (command-rewriter (car input) full-command inputs)))))
 
 ;; An actual decoder. It returns the command to actually run given stack information
 ;; and the value of the command.
@@ -795,11 +820,11 @@
 ;; If it can't convert the compressed input to decompressed data all at once, it
 ;; pushes on to the stack a continuation representing the rest of the work to do,
 ;; and then pushes the "call" builtin.
-(defun compressed-to-commands (input types fnid)
+(defun compressed-to-commands (input types argstack-types fnid)
   (let ((commands nil)
 	(cont t)
 	(defun-part nil))
-;    (format t "ARGSTACKTYPES ~a~%" restore-args)
+    (format t "input data is ~a~%" (get-compressed-data (caar input)))
     (loop while cont do
 	 (let ((cmd 
 		(if (not (member 'abort types)) 
@@ -810,10 +835,16 @@
 		  (push 'int types)
 		  (push cmd commands))
 		 (fun
+;		  (format t "AND PUSH FUN2 ~a~%" cmd)
 		  (push 'fun types)
 		  (push cmd commands))
 		 (fun-as-list
-		  (push 'fun types)
+;		  (format t "AND PUSH FUN1 ~a ~a~%" (third cmd) (member '*restoring (third cmd)))
+		  (push (if (member '*restoring (third cmd))
+			    'fun-restoring
+			    'fun-nonrestoring)
+			types)
+;		  (print types)
 		  (push cmd commands))
 		 (list
 		  (push 'list types)
@@ -844,24 +875,34 @@
 		       (push a types)
 		       (push c types))
 		     (push '(builtin unrot) commands))
-		    ;; (arg-a
-		    ;;  (push (first argstack-types) types)
-		    ;;  (push '(builtin arg-a) commands))
-		    ;; (arg-b
-		    ;;  (push (second argstack-types) types)
-		    ;;  (push '(builtin arg-b) commands))
-		    ;; (arg-c
-		    ;;  (push (third argstack-types) types)
-		    ;;  (push '(builtin arg-c) commands))
-		    ;; (arg-d
-		    ;;  (push (fourth argstack-types) types)
-		    ;;  (push '(builtin arg-d) commands))
+		    (arg-a
+		     (push (first argstack-types) types)
+		     (push '(builtin arg-a) commands))
+		    (arg-b
+		     (push (second argstack-types) types)
+		     (push '(builtin arg-b) commands))
+		    (arg-c
+		     (push (third argstack-types) types)
+		     (push '(builtin arg-c) commands))
+		    (arg-d
+		     (push (fourth argstack-types) types)
+		     (push '(builtin arg-d) commands))
 		    (otherwise
-		     (if (or (member 'fun (loop for i from 1 to (length args) collect (pop types)))
-			     (nth 3 full))
-			 (push 'abort types)
-			 (setf types (append results types)))
-		     (push (list 'builtin decoded) commands))))))
+		     (let ((the-types (loop for i from 1 to (length args) collect (pop types))))
+;		       (format t "THETYPES ~a~%" the-types)
+		       (setf commands (append (reverse (command-rewriter (list 'builtin decoded)
+									 full
+									 the-types))
+					      commands))
+		       (if (or (member 'fun-nonrestoring the-types)
+			       (member 'fun the-types) ;; this should never happen
+			       (member :messy (nth 3 full)))
+			   (progn
+;			     (format t "DOABORT ~a ~a ~a~%" full the-types results)
+;			     (if (equal results '(list))
+;				 (push '(builtin force) commands))
+			     (push 'abort types))
+			   (setf types (append results types)))))))))
 	       (if (remaining-work input)
 		 (let* ((new-name (intern (concatenate 'string 
 						       (symbol-name fnid) "P"))))
@@ -911,6 +952,7 @@
 				       (remaining-work input)))
 			   '(*no-arguments)))))
 		   (setf cont nil)))))
+;    (format t "~%COMMANDS IS ~a~%"  (reverse commands))
     (cons (reverse commands)
 	  defun-part)))
 
@@ -929,14 +971,14 @@
 	  (int
 	   `(push ,(cadr decoded) stack))
 	  (fun
-	   `(push #',(cadr decoded) stack))
+	   `(push (make-fun-on-stack :fun #',(cadr decoded) :is-restoring ',(caddr decoded)) stack))
 	  (fun-as-list
 	   (let ((id (fresh-fun-name)))
 	     (push
 	      (car (create-defuns (list (cons id (list (list (list (cadr decoded)))))) 
 				  (caddr decoded))) 
 	      defuns)
-	     `(push #',id stack)))
+	     `(push (make-fun-on-stack :fun #',id :is-restoring ,(find 'restoring (caddr decoded))) stack)))
 	  (list
 	   `(push '(,(cadr decoded)) stack))
 	  (builtin
@@ -992,6 +1034,11 @@
 	     (:conc-name "STATE-"))
   (base-stack nil))
 
+(defstruct (fun-on-stack
+	     (:conc-name "FUN-ON-STACK-"))
+  (fun nil)
+  (is-restoring 'restoring))
+
 ;; Returns a lambda which runs the full program given by the input.
 ;; We may need to define some new functions either because ir-to-lisp
 ;; told us to, or because compressed-to-commands told us to.
@@ -1000,7 +1047,10 @@
 (defun uncompress-body (fnid block-kinds input args stack state decompressor)
   (let* ((correct-stack (correct-stack block-kinds args stack state))
 	 (types (mapcar #'typeof correct-stack))
-	 (uncompressed-code (funcall decompressor input types fnid))
+	 (argument-types (if (member '*no-arguments block-kinds)
+			     (mapcar #'typeof (car argument-restore-stack))
+			     types))
+	 (uncompressed-code (funcall decompressor input types argument-types fnid))
 	 (defun-part (cdr uncompressed-code))
 	 (ir-part (ir-to-lisp (car uncompressed-code)))
 	 (lambda-part (lisp-optimize (car ir-part)))
@@ -1110,9 +1160,6 @@
 			   `((functhing ,count) (integers ,count)
 			     ,@(loop for i from 0 to (1- count) collect
 				    `((builtin (,i . ,count)) 8))))))))))))
-;			     ((eof) ,count))))
-;			(eof
-;			 `(((stuff) 9) ((eof) 1))))))))))
 
       (arithmetic-encode-body (cadr list))))
 
@@ -1187,6 +1234,10 @@
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
       (assert (equalp answer run-answer))
       run-answer)))
+
+(defun run-bits (bits)
+    (setf (symbol-function 'decompress) #'compressed-to-commands)
+    (time (eval (run-compiled (bytes-to-list bits) nil))))
 
 (defun repl-print (x)
   (case (typeof x)
@@ -1287,20 +1338,21 @@
 ;(run '(200 (*restoring (dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) call-n-times) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
 
 
-(run '((*restoring
-	(dup 3 mod subtract dup 3 add swap) swap ; thing to take n -> [n-n%3, n+3-n%3]
-	9 range dup outer flatten  ; create all paris of ints
-	(*restoring *exploding swap drop get ; get one row
-	 arg-c transpose arg-b get ; get one colum
-	 concatenate ; append them
-	arg-b arg-d call arg-c (*restoring rot substr) map ; get one 3 wide stripe
-	 arg-a arg-d call substr ; get the 3x3 box
-	 flatten rot drop drop concatenate ; add it on to the list
-	 uniq ; take only unique elements
-	 9 range swap set-minus
-	 (*restoring 0 neq) filter force ; remove 0s
-	 ) 
-	map force) ; function which returns the valid moves
-       (*restoring call-with-return (length) map arg-min print)
-       call-with-return)
-     '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
+;.323
+;; (run '((*restoring
+;; 	(dup 3 mod subtract dup 3 add swap) swap ; thing to take n -> [n-n%3, n+3-n%3]
+;; 	9 range dup outer flatten  ; create all paris of ints
+;; 	(*restoring *exploding swap drop get ; get one row
+;; 	 arg-c transpose arg-b get ; get one colum
+;; 	 concatenate ; append them
+;; 	arg-b arg-d call arg-c (*restoring rot substr) map ; get one 3 wide stripe
+;; 	 arg-a arg-d call substr ; get the 3x3 box
+;; 	 flatten rot drop drop concatenate ; add it on to the list
+;; 	 uniq ; take only unique elements
+;; 	 9 range swap set-minus
+;; 	 (*restoring 0 neq) filter force ; remove 0s
+;; 	 ) 
+;; 	map force) ; function which returns the valid moves
+;;        (*restoring call-with-return (*restoring length) map arg-min print)
+;;        call-with-return)
+;;      '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
