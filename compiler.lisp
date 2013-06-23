@@ -657,7 +657,7 @@
 		    (if (not (gethash val seen))
 			(setf (gethash val seen) (new-array)))
 		    (vector-push-extend el (gethash val seen))))))
-	 (print seen)
+;	 (print seen)
 	 (maphash (lambda (key value) (vector-push-extend (list value) res)) seen)
 	 (list res)))
 ;  (cmd unreduce ((fun fn) (type something)) (list)
@@ -755,6 +755,8 @@
 (defun fresh-fun-name ()
   (intern (concatenate 'string "DYN-FN-" (write-to-string (incf *fun-count*)))))
 
+;; When we eval our defuns, we wrap it with only the *commands* which are actually
+;; used; otherwise the evals become very slow.
 (defun keep-only (commands body)
   (labels ((referenced-commands (body)
 	     (if (listp body)
@@ -769,6 +771,16 @@
        (lambda (x)
 	 (member (car x) refed))
        commands))))
+
+;; This is where we keep track of the uncompressed resulting lisp code from
+;; the low level binary data, and also where we keep track of the resulting
+;; high level lisp code.
+(defvar *final-defuns* nil)
+(defvar *final-highlevel* nil)
+
+(defun log-uncompressed (name defun highlevel)
+  (push (list name defun) *final-defuns*)
+  (push (list name highlevel) *final-highlevel*))
 
 ;; Create a set of lisp defuns that actually let the code run. Each defun
 ;; initially just uncompresses the code it contains, and then from then on
@@ -787,7 +799,8 @@
 	    (if first
 		(let* ((fn-body (uncompress-body ',fnid ',(append block-kinds more-block-kinds)
 						 ',body args stack qstate #'decompress))
-		       (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) fn-body))))
+		       (fn-lambda (eval (list 'labels (keep-only *commands* fn-body) 
+					      fn-body))))
 		  (setf first nil)
 		  (setf (symbol-function ',fnid) fn-lambda)
 		  (setf (symbol-function ',(with-under fnid)) fn-lambda)
@@ -1077,6 +1090,8 @@
 	  (int
 	   `(push ,(cadr decoded) stack))
 	  (fun
+;	   (print decoded)
+;	   (error 'hi 'bye)
 	   `(push (make-fun-on-stack :fun #',(cadr decoded) :is-restoring ',(caddr decoded)) stack))
 	  (fun-as-list
 	   (let ((id (fresh-fun-name)))
@@ -1084,7 +1099,7 @@
 	      (car (create-defuns (list (cons id (list (list (list (cadr decoded)))))) 
 				  (caddr decoded))) 
 	      defuns)
-	     `(push (make-fun-on-stack :fun #',id :is-restoring ,(find 'restoring (caddr decoded))) stack)))
+	     `(push (make-fun-on-stack :fun #',id :is-restoring ,(not (null (find '*restoring (caddr decoded))))) stack)))
 	  (list
 	   `(push '(,(cadr decoded)) stack))
 	  (builtin
@@ -1192,6 +1207,7 @@
 		     `((setf stack (pop restore-stack)))
 		     `((pop restore-stack)))
 	       res))))
+    (log-uncompressed fnid final-part uncompressed-code)
     
     (if defun-part
 	(if defun-part-2
@@ -1224,8 +1240,8 @@
 ;;   2. Prefix the function by the bits representing a function, and its length.
 ;;   3. Add the bits of the function to the outer function.
 ;;   4. Recurse.
-(defun list-to-bytes (list)
-  (format t "~%AAAAAA ~a" list)
+(defun list-to-bits (list)
+;  (format t "~%AAAAAA ~a" list)
   (labels ((prepare (function-tree)
 ;	     (print function-tree)
 	       (append
@@ -1278,10 +1294,28 @@
 
       (arithmetic-encode-body (cadr list))))
 
+(defun bits-to-bytes (bits)
+  (let ((end-marked (append bits '(1))))
+    (loop while (not (eq (mod (length end-marked) 8) 0)) do
+	 (setf end-marked (append end-marked '(0))))
+    (subseq (write-to-string 
+	     (parse-integer (format nil "11111111~{~a~}" end-marked) :radix 2) :base 16)
+	    2)))
 
-;; From the compressed bytes, return a list of how to run them.
-(defun bytes-to-list (bytes)
-  (let* ((encoded (make-compressed-data bytes)))
+(defun bytes-to-bits (bytes)
+  (let* ((hex-digits '((0 0 0 0) (0 0 0 1) (0 0 1 0) (0 0 1 1)
+		       (0 1 0 0) (0 1 0 1) (0 1 1 0) (0 1 1 1)
+		       (1 0 0 0) (1 0 0 1) (1 0 1 0) (1 0 1 1)
+		       (1 1 0 0) (1 1 0 1) (1 1 1 0) (1 1 1 1)))
+	 (bits (loop for el across bytes append 
+		   (nth (parse-integer (coerce (list el) 'string) :radix 16)  hex-digits))))
+    (loop while (eq (car (last bits)) 0) do
+	 (setf bits (butlast bits)))
+    (butlast bits)))
+
+;; From the compressed bits, return a list of how to run them.
+(defun bits-to-list (bits)
+  (let* ((encoded (make-compressed-data bits)))
     (list 'fun (list (list encoded)))))
 
 ;; Converts the high-level language to commands tagged by their type.
@@ -1330,8 +1364,20 @@
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
 	(setf (symbol-function 'decompress) #'commands-to-commands)
-	(let ((answer (time (eval (run-compiled tagged init-stack)))))
-	  (cons answer (list-to-bytes (drop-last (do-replace tagged *compiled-code*)))))))))
+	(let ((answer (eval (run-compiled tagged init-stack))))
+	  (cons answer 
+		(bits-to-bytes 
+		 (list-to-bits 
+		  (drop-last (do-replace tagged *compiled-code*))))))))))
+
+(defun run-bits (bits &optional (init-stack nil))
+    (setf (symbol-function 'decompress) #'compressed-to-commands)
+    (setf *final-defuns* nil)
+    (setf *final-highlevel* nil)
+    (time (eval (run-compiled (bits-to-list bits) init-stack))))
+
+(defun run-bytes (bytes &optional (init-stack nil))
+  (run-bits (bytes-to-bits bytes) init-stack))
 
 ;; Run the program by first compiling it, then running it.
 (defun run (i &optional (init-stack nil))
@@ -1341,25 +1387,30 @@
 	 (answer (car answer-and-compiled))
 	 (compiled (cdr answer-and-compiled))
 	 (*fun-count* 0))
-    (format t "~%The compiled version is ~a of size ~a ~a~%" compiled (length compiled) 
-	    (/ (length compiled) 8.0))
+    (format t "~%The compiled version is ~a of size ~a~%" compiled (length compiled))
 ;    (print answer)
-    (setf (symbol-function 'decompress) #'compressed-to-commands)
-    (let ((run-answer (time (eval (run-compiled (bytes-to-list compiled) init-stack)))))
+    (let ((run-answer (run-bytes compiled init-stack)))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
       (assert (equalp answer run-answer))
       run-answer)))
 
-(defun run-bits (bits)
-    (setf (symbol-function 'decompress) #'compressed-to-commands)
-    (time (eval (run-compiled (bytes-to-list bits) nil))))
+(defun make-lisp-from-final (&optional (init-stack nil))
+  (let ((body (loop for el in *final-defuns* collect
+		   `(setf (symbol-function ',(car el)) ,(cadr el)))))
+    `(labels ,(keep-only *commands* body)
+       (let ((stack ',init-stack)
+	     (restore-stack nil)
+	     (argument-restore-stack nil))
+	 ,@body
+	 (funcall #'fn-1 (make-state) 0 nil)
+	 (mapcar #'repl-print stack)))))
 
 (defun repl-print (x)
   (case (typeof x)
     (int x)
     (bool 
      (if x 'true 'false))
-    (fun 'fun)
+;    (fun 'fun)
     (list
 ;     (print x)
      (with-forced x list
@@ -1394,10 +1445,9 @@
 	(loop for el in (car code) for i from 0 do
 	     (format t "   ~a. ~a~%" i el))
 	(format t "~%")
-	(format t "Compiled Code (~a bits): ~{~a~}~%" (length (cdr code)) (cdr code))))))
+	(format t "Compiled Code (~a bytes): ~a~%" (/ (length (cdr code)) 2) (cdr code))))))
 
-
-;(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'run-it-now)
+(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'run-it-now)
       
 ;(run '(5 range (1 add) map))  
 ;(run '((*restoring 5) call))
@@ -1474,5 +1524,13 @@
 ;(run '(dup range permutations (*restoring with-index dup (*restoring *exploding add) map uniq swap (*restoring *exploding subtract) map uniq concatenate length arg-b dup add eq) filter length) '(8))
 
 
+;(print (make-lisp-from-final '(8)))
+;(print *final-defuns*)
+;(print *final-highlevel*)
 
-;;(run '(range permutations (*restoring with-index dup (*restoring sum) map uniq swap (*restoring *exploding subtract) map uniq concatenate length) keep-maxes-by) '(6))
+;(run '(range permutations (*restoring with-index (*restoring sum) map uniq arg-a with-index (*restoring *exploding subtract) map uniq concatenate length) keep-maxes-by) '(6))
+
+
+;(let ((inp '(0 0 0 0 0 0 1 1 1 0 0 1 0 0 0 1 1 1 0 1 1 1 1 0 1 1 1 1 0 0 0 1 0 1 0 1
+;       1 1 0 0 0 0 0 1 1 1 1 0 0 0 1 0 0 0 1 1 0 0 0 1 0 0 1 1 1 0 0 0)))
+;  (assert (equal (bytes-to-bits (bits-to-bytes inp)) inp)))

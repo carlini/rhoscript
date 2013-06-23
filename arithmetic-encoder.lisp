@@ -155,6 +155,7 @@
   (setf (get-compressed-data comp) (get-next-data comp))
   (setf (get-remaining comp) (* (get-remaining comp) (get-next-size comp))))
 
+; Mathematically provably safe when no item takes more than 1/2 of the total space.
 (defmethod has-more-data ((comp compressed-data))
   (< 3.33 (log (get-remaining comp) 2)))
 
