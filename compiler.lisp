@@ -35,6 +35,8 @@
 			 c
 			 (symbol-name x))))
   (defun with-under (x) (with-char x "_"))
+  (defun without-under (x)
+    (intern (subseq (symbol-name x) 1)))
 
   ;; The handler for the commands macro. Creates the *commands* and
   ;; the *commands-info* lists with the correct information.
@@ -177,7 +179,7 @@
 ; type
   (cmd unsure () () :messy
        "does nothing"
-       5)
+       42)
   (cmd dup ((type other)) (type type)
        "Duplicates the top element of the stack."
        (list other other))
@@ -223,7 +225,36 @@
        "Pushes the forth to top element of the stack, at the time of the last
         context establishment, to the stack."
        (cadddr (car argument-restore-stack)))
+;  (cmd pair ((type a) (type b)) (type)
+;       (list (to-array (list a b))))
+  (cmd forever ((type arg)) (list)
+       (creating-new-list
+	 (next
+	  (vector-push-extend arg result))))
+  (cmd box ((type arg)) (list)
+       (creating-new-list
+	 (initially
+	  (vector-push-extend arg result))))
+  (cmd cons ((type arg) (list l)) (list)
+       (list-to-list-iter l
+	 (initially
+	  (vector-push-extend arg result))
+	 (next
+	  (vector-push-extend each result))))
+  (cmd member ((type arg) (list l)) (bool)
+       (with-forced l list
+	 (loop for el across list do
+	      (if (equalp el arg)
+		  (return t)))))
+  (cmd index-of ((type arg) (list l)) (int)
+       (with-forced l list
+	 (block out
+	   (loop for el across list for count from 0 do
+		(if (equalp el arg)
+		    (return-from out count)))
+	   -1)))
 
+  
 ; int
   (cmd pick ((int n)) (type)
        "Take the nth element of the stack and duplicate it on the top of the stack."
@@ -245,6 +276,9 @@
        (progn
 ;	 (format t "~%add ~a ~a" a b)
 	 (+ a b)))
+  (cmd negate ((int a)) (int)
+       "Decrements the top element of the stack."
+       (- 0 a))
   (cmd inc ((int a)) (int)
        "Increments the top element of the stack."
        (+ a 1))
@@ -257,9 +291,15 @@
   (cmd subtract ((int a) (int b)) (int)
        "Subtracts from the second-to-top by the top of the stak."
        (- b a))
+  (cmd swapsubtract ((int a) (int b)) (int)
+       "Subtracts from the top by the second-to-top of the stak."
+       (- a b))
   (cmd divide ((int a) (int b)) (int)
        "Divides from the second-to-top by the top of the stak."
        (floor (/ b a)))
+  (cmd swapdivide ((int a) (int b)) (int)
+       "Divides from the top by the second-to-top of the stak."
+       (floor ( a b)))
   (cmd pow ((int a) (int b)) (int)
        "Multiplies the top two elements onf the stack."
        (expt b a))
@@ -269,6 +309,9 @@
   (cmd abs ((int a)) (int)
        "Computes the absolute value of the top of the stack."
        (abs a))
+  (cmd zero ((int a)) (bool)
+       "Test if a number is zero."
+       (= a 0))
   (cmd even ((int a)) (bool)
        "Tests if the top of the stack is an even number."
        (evenp a))
@@ -298,6 +341,11 @@
        "Generates a list of numbers from 1 (inclusive) to n (exclusive)."
        (let ((arr (make-array n :adjustable t)))
 	 (loop for n from 1 to n do (setf (aref arr (1- n)) n))
+	 (list arr)))
+  (cmd range-from-to ((int a) (int b)) (list)
+       "Generates a list of numbers from 1 (inclusive) to n (exclusive)."
+       (let ((arr (make-array (- a b) :adjustable t)))
+	 (loop for n from b to (1- a) do (setf (aref arr (- n b)) n))
 	 (list arr)))
   (cmd get ((int i) (list l)) (type)
        "Indexes in to a list."
@@ -361,6 +409,18 @@
 	   (loop for el in
 		(loop for el across list for ii from 0 collect
 		     (if (<= el best)
+			 (progn
+			   (setf best el)
+			   ii)
+			 -1))
+		maximize el))))
+  (cmd arg-max ((list l)) (int)
+       "Find the smallest element of a list."
+       (let ((best (list-get l 0)))
+	 (with-forced l list
+	   (loop for el in
+		(loop for el across list for ii from 0 collect
+		     (if (>= el best)
 			 (progn
 			   (setf best el)
 			   ii)
@@ -521,9 +581,22 @@
        (save-arguments
        (list-to-list-iter l
 	   (next
-;	    (print "NEXT ITER")
-;	    (print stack)
 	    (vector-push-extend (funcall fn state 1 (list each)) result)))))
+  (cmd keep-maxes-by ((fun fn) (list l)) (list)
+       "Keep only the largest elements of a list as decided by a functions."
+       (save-arguments
+	 (let ((best (funcall fn state 1 (list (list-get l 0))))
+	       (result nil))
+	   (with-forced l list
+	     (loop for el across list do
+		  (let ((value (funcall fn state 1 (list el))))
+;		    (format t "is ~a ~a~%" el value)
+		    (when (> value best)
+			(setf best value)
+			(setf result nil))
+		    (if (>= value best)
+			(push el result)))))
+	   (list (to-array (reverse result))))))
   (cmd filter ((fun fn) (list l)) (list)
        "Returns a new list where only elements where the function returns true are retained."
        (save-arguments
@@ -557,6 +630,38 @@
 			     (mapcar (lambda (x) (funcall fn state 1 (list x each))) seen)))
 		(vector-push-extend each result)
 		(push each seen)))))))
+  (cmd tabulate-forever ((fun fn)) (list)
+       "Create a sequence obtained by calling a function on the integers from 0"
+       (let ((number 0))
+	 (save-arguments
+	   (creating-new-list
+	     (next
+	      (vector-push-extend (funcall fn state 1 (list number)))
+	      (incf number))))))
+  (cmd tabulate ((fun fn) (int upto)) (list)
+       "Create a sequence obtained by calling a function on the integers from 0"
+       (let ((number 0))
+	 (save-arguments
+	   (creating-new-list
+	     (next
+	      (when (< number upto)
+		(vector-push-extend (funcall fn state 1 (list number)))
+		(incf number)))))))
+  (cmd partition ((fun fn) (list l)) (list)
+       (let ((seen (make-hash-table :test 'equalp))
+	     (res (new-array)))
+	 (save-arguments
+	   (with-forced l list
+	     (loop for el across list do
+		  (let ((val (funcall fn state 1 (list el))))
+		    (if (not (gethash val seen))
+			(setf (gethash val seen) (new-array)))
+		    (vector-push-extend el (gethash val seen))))))
+	 (print seen)
+	 (maphash (lambda (key value) (vector-push-extend (list value) res)) seen)
+	 (list res)))
+;  (cmd unreduce ((fun fn) (type something)) (list)
+  
   (cmd ite ((fun a) (fun b) (bool case)) ()
        "Run one of two functions based on if the next element on the stack is true or not."
        (save-arguments
@@ -755,10 +860,11 @@
 	(nth (car command-abbrv) possible-commands))))
 
 (defun make-function-weights (&optional (ct 1))
-    (let ((valids '(nil (*restoring) (*exploding) 
-		    (*restoring *exploding))))
+    (let* ((valids '((nil 8) ((*restoring) 16) ((*exploding) 1) 
+		     ((*restoring *exploding) 2)))
+	   (total (loop for el in valids sum (second el))))
       (loop for el in valids
-	 collect `((fun ,el) ,(/ ct (length valids))))))
+	 collect `((fun ,(car el)) ,(/ (* ct (second el)) total)))))
 
 ;; Given the big blob of compressed data, extracts the next single token.
 ;; The blob of compressed data can be represented any way, as long as it is tagged
@@ -824,7 +930,7 @@
   (let ((commands nil)
 	(cont t)
 	(defun-part nil))
-    (format t "input data is ~a~%" (get-compressed-data (caar input)))
+;    (format t "input data is ~a~%" (get-compressed-data (caar input)))
     (loop while cont do
 	 (let ((cmd 
 		(if (not (member 'abort types)) 
@@ -997,8 +1103,31 @@
      defuns)))
 
 (defun lisp-optimize (code)
-;  (format t "~a~%" code)
-  code)
+;  (format t "code is before optimize ~a~%" code)
+  (let ((curstack nil)
+	(result nil))
+    (labels ((maybe-replace (cmd)
+	       (if (and (listp cmd) (assoc (without-under (car cmd)) *command-info*))
+		   (cons (car cmd)
+			 (loop for el in (cdr cmd) collect
+			      (if curstack
+				  (pop curstack)
+				  '(pop stack))))
+		   cmd)))
+      (loop for el in code do
+;	   (format t "it is ~a and ~a~%" el (eq (car el) 'push))
+	   (if (eq (car el) 'push)
+	       (progn
+		 (push (maybe-replace (second el)) curstack))
+	       (progn
+;		 (format t "dodump1 ~a~%" curstack)
+		 (setf result (append (loop for e in curstack collect `(push ,e stack)) result))
+		 (setf curstack nil)
+		 (push el result)))))
+;    (format t "dodump2 ~a~%" curstack)
+    (setf result (append (loop for e in curstack collect `(push ,e stack)) result))
+    (reverse result)))
+    
 
 (defun correct-stack (kinds args stack state)
 ;  (print 123123)
@@ -1015,20 +1144,6 @@
 	     first-pass)))
 ;    (format t "passes are ~a ~a~%" first-pass second-pass)
     second-pass))
-
-(defun uncompress-prefix (kinds)
-  `((push stack restore-stack)
-    ,@(if (member '*no-arguments kinds)
-	  `((pop argument-restore-stack)))
-    (setf stack (correct-stack ',kinds args stack argument-restore-stack))))
-
-(defun uncompress-suffix (kinds)
-  `(
-    ,@(if (member '*restoring kinds)
-      `((setf stack (pop restore-stack)))
-      `((pop restore-stack)))
-    ,@(if (not (member '*no-arguments kinds))
-	  `((pop argument-restore-stack)))))
 
 (defstruct (state
 	     (:conc-name "STATE-"))
@@ -1110,7 +1225,7 @@
 ;;   3. Add the bits of the function to the outer function.
 ;;   4. Recurse.
 (defun list-to-bytes (list)
-;  (format t "~%AAAAAA ~a" list)
+  (format t "~%AAAAAA ~a" list)
   (labels ((prepare (function-tree)
 ;	     (print function-tree)
 	       (append
@@ -1215,7 +1330,7 @@
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
 	(setf (symbol-function 'decompress) #'commands-to-commands)
-	(let ((answer (eval (run-compiled tagged init-stack))))
+	(let ((answer (time (eval (run-compiled tagged init-stack)))))
 	  (cons answer (list-to-bytes (drop-last (do-replace tagged *compiled-code*)))))))))
 
 ;; Run the program by first compiling it, then running it.
@@ -1269,6 +1384,20 @@
 ;; 	     (mapcar #'split-by-spaces strs))
 ;; 	)))
 	
+(defun run-it-now ()
+  (handler-bind ((style-warning #'muffle-warning))
+    (with-timeout 1
+      (let ((code (compile-by-running 
+		   (read-from-string (read-line))
+		   nil)))
+	(format t "Stack dump:~%")
+	(loop for el in (car code) for i from 0 do
+	     (format t "   ~a. ~a~%" i el))
+	(format t "~%")
+	(format t "Compiled Code (~a bits): ~{~a~}~%" (length (cdr code)) (cdr code))))))
+
+
+;(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'run-it-now)
       
 ;(run '(5 range (1 add) map))  
 ;(run '((*restoring 5) call))
@@ -1301,21 +1430,6 @@
 ; [5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter force length])
 
 
-(defun sdfsdf ()
-  (handler-bind ((style-warning #'muffle-warning))
-    (with-timeout 1
-      (with-open-file (stream "/tmp/intolisp")
-	(let ((code (compile-by-running 
-		     (read-from-string (read-line stream))
-		     nil)))
-		      (format t "Stack dump:~%")
-		      (loop for el in (car code) for i from 0 do
-			   (format t "   ~a. ~a~%" i el))
-		      (format t "~%")
-		      (format t "Compiled Code (~a bits): ~{~a~}~%" (length (cdr code)) (cdr code)))))))
-
-
-;; (sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'sdfsdf)
 ;(run '(5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter force length))
 
 ;; (run '((dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force) '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
@@ -1356,3 +1470,9 @@
 ;;        (*restoring call-with-return (*restoring length) map arg-min print)
 ;;        call-with-return)
 ;;      '((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0))))))
+
+;(run '(dup range permutations (*restoring with-index dup (*restoring *exploding add) map uniq swap (*restoring *exploding subtract) map uniq concatenate length arg-b dup add eq) filter length) '(8))
+
+
+
+;;(run '(range permutations (*restoring with-index dup (*restoring sum) map uniq swap (*restoring *exploding subtract) map uniq concatenate length) keep-maxes-by) '(6))

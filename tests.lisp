@@ -72,7 +72,7 @@
   5 range permutations length)
 
 (test "Permutations values 1" '(10 10)
-  5 range permutations (sum) map dup max swap min 2 implode
+  5 range permutations (sum) map dup max swap min 2 implode)
 
 (test "Nonrestoring is forced" '(2 3 5 8 12 17 23 30 38 47)
   1 10 range (add dup) map (*restoring inc) map)
