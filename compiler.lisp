@@ -65,7 +65,8 @@
 		 (mak
 		  (caddr inp))))
 	     (notes-of (x)
-	       (loop for i from 4 while (symbolp (nth i x)) collect (nth i x))))
+	       (loop for i from 4 while (and (symbolp (nth i x)) (not (null (nth i x))))
+		  collect (nth i x))))
       
       `(defun make-commands ()
 	 (setf *full-commands* ',body)
@@ -228,32 +229,36 @@
 ;  (cmd pair ((type a) (type b)) (type)
 ;       (list (to-array (list a b))))
   (cmd forever ((type arg)) (list)
+       "Create an infinite list containing a single element."
        (creating-new-list
 	 (next
 	  (vector-push-extend arg result))))
   (cmd box ((type arg)) (list)
+       "Place an element in a list containing only itself."
        (creating-new-list
 	 (initially
 	  (vector-push-extend arg result))))
   (cmd cons ((type arg) (list l)) (list)
+       "Add an item to the front of a list."
        (list-to-list-iter l
 	 (initially
 	  (vector-push-extend arg result))
 	 (next
 	  (vector-push-extend each result))))
   (cmd member ((type arg) (list l)) (bool)
+       "Test if an item is a member of a list."
        (with-forced l list
 	 (loop for el across list do
 	      (if (equalp el arg)
 		  (return t)))))
   (cmd index-of ((type arg) (list l)) (int)
+       "Find the index of an item in a list, or -1 if not present."
        (with-forced l list
 	 (block out
 	   (loop for el across list for count from 0 do
 		(if (equalp el arg)
 		    (return-from out count)))
 	   -1)))
-
   
 ; int
   (cmd pick ((int n)) (type)
@@ -273,11 +278,9 @@
        (not (>= a b)))
   (cmd add ((int a) (int b)) (int)
        "Adds the top two elements onf the stack."
-       (progn
-;	 (format t "~%add ~a ~a" a b)
-	 (+ a b)))
+       (+ a b))
   (cmd negate ((int a)) (int)
-       "Decrements the top element of the stack."
+       "Negate the top element of the stack."
        (- 0 a))
   (cmd inc ((int a)) (int)
        "Increments the top element of the stack."
@@ -1447,7 +1450,7 @@
 	(format t "~%")
 	(format t "Compiled Code (~a bytes): ~a~%" (/ (length (cdr code)) 2) (cdr code))))))
 
-(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'run-it-now)
+;(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'run-it-now)
       
 ;(run '(5 range (1 add) map))  
 ;(run '((*restoring 5) call))
