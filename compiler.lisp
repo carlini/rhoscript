@@ -6,7 +6,7 @@
   (let ((result (new-array)))
     (loop for item in list do
 	 (vector-push-extend item result))
-    result))
+    (make-type-list :array result)))
 
 (defmacro ignore-redefun (&body code)
   `(locally
@@ -104,28 +104,34 @@
 ;; Get the nth element of some lazy list, evaluating as required.
 ;; Returns either the element or null-symbol.
 (defun list-get (list n)
-  (if (< n (length (car list)))
-      (aref (car list) n)
+  (if (< n (length (type-list-array list)))
+      (aref (type-list-array list) n)
       (progn
-	(loop while (and (<= (length (car list)) n) (not (null (cdr list)))) do
-	     (funcall (cdr list)))
-	(if (< n (length (car list)))
-	    (aref (car list) n)
+	(loop while (and (<= (length (type-list-array list)) n) 
+			 (not (null (type-list-generator list)))) do
+	     (funcall (type-list-generator list)))
+	(if (< n (length (type-list-array list)))
+	    (aref (type-list-array list) n)
 	    null-symbol))))
 
 ;; A macro to force the evaluation of a list and do something with the result.
 (defmacro with-forced (input output &body run)
   (let ((name (gensym)))
     `(let ((,name ,input))
-       (let ((,output (car ,name)))
-	 (loop while (not (null (cdr ,name))) do
-	      (funcall (cdr ,name)))
+       (let ((,output (type-list-array ,name)))
+	 (loop while (not (null (type-list-generator ,name))) do
+	      (funcall (type-list-generator ,name)))
 	 ,@run))))
 
 (defmacro save-arguments (&body body)
   `(let ((state (make-state :base-stack stack)))
      ,@body))
 
+
+(defstruct (type-list 
+	     (:conc-name "TYPE-LIST-"))
+  (array nil)
+  (generator nil))
 
 ;; A macro to create a new list.
 ;; There are three cases:
@@ -143,21 +149,17 @@
      (list result)))
 (defmacro creating-new-list (&body body)
   `(let* ((result (new-array))
-  	  (cons-cell (cons result nil)))
+  	  (the-type-list (make-type-list :array result)))
      ,@(if (assoc 'initially body)
   	   (cdr (assoc 'initially body)))
-     (setf (cdr cons-cell)
-;	   (save-arguments
-;	   (let ((stack-copy stack))
-	     (lambda ()
-;	       (let ((argument-restore-stack (list stack-copy)))
-;		 (format t "Set ARS 1 ~A~%" argument-restore-stack)
-		 (if (not (progn ,@(cdr (assoc 'next body))))
-		     (progn
-		       ,@(if (assoc 'finally body)
-			     (cdr (assoc 'finall body)))
-		       (setf (cdr cons-cell) nil)))))
-     cons-cell))
+     (setf (type-list-generator the-type-list)
+	   (lambda ()
+	     (if (not (progn ,@(cdr (assoc 'next body))))
+		 (progn
+		   ,@(if (assoc 'finally body)
+			 (cdr (assoc 'finall body)))
+		   (setf (type-list-generator the-type-list) nil)))))
+     the-type-list))
 
 ;; A macro which creates a new list based off of a previous list.
 (defmacro list-to-list-iter-q (list-name &body body)
@@ -170,10 +172,10 @@
 (defmacro list-to-list-iter (list-name &body body)
   `(let* ((result (new-array))
   	  (index 0)
-  	  (cons-cell (cons result nil)))
+  	  (the-type-list (make-type-list :array result)))
      ,@(if (assoc 'initially body)
   	   (cdr (assoc 'initially body)))
-     (setf (cdr cons-cell)
+     (setf (type-list-generator the-type-list)
 ;	   (let ((stack-copy stack))
 ;	   (save-arguments
 	     (lambda ()
@@ -184,11 +186,11 @@
 		       (progn
 			 ,@(if (assoc 'finally body)
 			       (cdr (assoc 'finally body)))
-			 (setf (cdr cons-cell) nil))
+			 (setf (type-list-generator the-type-list) nil))
 		       (progn
 			 ,@(cdr (assoc 'next body))
 			 (incf index))))))
-     cons-cell))
+     the-type-list))
 
 (commands
 ; type
@@ -348,22 +350,22 @@
        (let ((a (new-array)))
 	 (loop for j from 1 to count do
 	      (vector-push-extend (pop stack) a))
-	 (list a)))
+	 (make-type-list :array a)))
   (cmd range () ((int n)) (list)
        "Generates a list of numbers from 0 (inclusive) to n (exclusive)."
        (let ((arr (make-array n :adjustable t)))
 	 (loop for n from 0 to (- n 1) do (setf (aref arr n) n))
-	 (list arr)))
+	 (make-type-list :array arr)))
   (cmd range-from-1 () ((int n)) (list)
        "Generates a list of numbers from 1 (inclusive) to n (exclusive)."
        (let ((arr (make-array n :adjustable t)))
 	 (loop for n from 1 to n do (setf (aref arr (1- n)) n))
-	 (list arr)))
+	 (make-type-list :array arr)))
   (cmd range-from-to () ((int a) (int b)) (list)
        "Generates a list of numbers from 1 (inclusive) to n (exclusive)."
        (let ((arr (make-array (- a b) :adjustable t)))
 	 (loop for n from b to (1- a) do (setf (aref arr (- n b)) n))
-	 (list arr)))
+	 (make-type-list :array arr)))
   (cmd get () ((int i) (list l)) (type)
        "Indexes in to a list."
        ; TODO negative index?
@@ -387,8 +389,9 @@
 				   (mapcar (lambda (y) (cons (car x) y))
 					   (combine (cdr x) (1- sz))))
 				 lst)))))
-	   (list (to-array (mapcar (lambda (x) (list (to-array x)))
-				   (combine (coerce list 'list) size)))))))
+	   (to-array 
+	    (mapcar (lambda (x) (to-array x))
+		    (combine (coerce list 'list) size))))))
 
 ; list
   (cmd explode () ((list l)) () :messy
@@ -405,7 +408,7 @@
 	    (vector-push-extend
 	     (list-to-list-iter b
 	       (next
-		(vector-push-extend (list (to-array (list tmp each))) result)))
+		(vector-push-extend (to-array (list tmp each)) result)))
 	     result)))))
   (cmd sum () ((list l)) (int)
        "Computes the sum of a list."
@@ -447,7 +450,7 @@
        "Returns a new list, where each element is a list of the index and list's element."
        (list-to-list-iter l
 	 (next
-	  (vector-push-extend (list (to-array (list index each))) result))))
+	  (vector-push-extend (to-array (list index each)) result))))
   (cmd sort () ((list l)) (list)
        "Sorts the elements of a list."
        (with-forced l list
@@ -474,10 +477,10 @@
 	     (next
 	      (if (not (member each forced-takeaway))
 		  (vector-push-extend each result)))))))
-  (cmd any () ((list l)) (list)
+  (cmd any () ((list l)) (bool)
        "Tests if any of the elements in a list are true."
        (not (loop for i from 0 until (eq (list-get l i) null-symbol) never (list-get l i))))
-  (cmd all () ((list l)) (list)
+  (cmd all () ((list l)) (bool)
        "Tests if all of the elements in a list are true."
        (loop for i from 0 until (eq (list-get l i) null-symbol) always (list-get l i)))
   (cmd zip () ((list a) (list b)) (list)
@@ -489,7 +492,7 @@
 	     (if (or (eq e1 null-symbol) (eq e2 null-symbol))
 		 nil
 		 (progn
-		   (vector-push-extend (list (to-array (list e1 e2))) result)
+		   (vector-push-extend (to-array (list e1 e2)) result)
 		   (incf i))))))))
   (cmd transpose () ((list l)) (list)
        "Takes a multi-dimensional list and reverses the order of the first and second axis.
@@ -526,14 +529,14 @@
 	 (with-forced a list
 	   (loop for j from 0 to (1- (length list)) do
 		(vector-push-extend (aref list j) res)))
-	 (list res)))
+	 (make-type-list :array res)))
   (cmd prefixes () ((list l)) (list)
        "Compute all of the prefixes of a list."
        (list-to-list-iter l
 	 (initially
-	  (vector-push-extend (list (new-array)) result))
+	  (vector-push-extend (make-type-list :array (new-array)) result))
 	 (next
-	  (vector-push-extend (list (subseq (car l) 0 (1+ index))) result))))
+	  (vector-push-extend (make-type-list :array (subseq (type-list-array l) 0 (1+ index))) result))))
   (cmd flatten () ((list l)) (list)
        "Flatten a n-dimensional list to an (n-1)-dimensional list."
        ;; fixmeinfinite
@@ -559,9 +562,9 @@
 	 (let ((length (length list)))
 	   (list-to-list-iter l
 	     (next
-	      (vector-push-extend (list (subseq (car l) index length)) result))
+	      (vector-push-extend (make-type-list :array (subseq (type-list-array l) index length)) result))
 	     (finally
-	      (vector-push-extend (list (new-array)) result))))))
+	      (vector-push-extend (make-type-list :array (new-array)) result))))))
   (cmd permutations () ((list l)) (list)
        "Compute all of the permutations of a list."
        (with-forced l list
@@ -575,8 +578,8 @@
 		    (if (= i 0)
 			(cdr list)
 			(cons (car list) (without (1- i) (cdr list))))))
-	   (list (to-array (mapcar (lambda (x) (list (to-array x)))
-				   (permute (coerce list 'list))))))))
+	   (to-array (mapcar (lambda (x) (to-array x))
+			     (permute (coerce list 'list)))))))
   (cmd force () ((list l)) (list)
        "Force a list to be evaluated completely."
        (with-forced l list
@@ -613,7 +616,7 @@
 			(setf result nil))
 		    (if (>= value best)
 			(push el result)))))
-	   (list (to-array (reverse result))))))
+	   (to-array (reverse result)))))
   (cmd filter () ((fun fn) (list l)) (list)
        "Returns a new list where only elements where the function returns true are retained."
        (save-arguments
@@ -676,7 +679,7 @@
 		    (vector-push-extend el (gethash val seen))))))
 ;	 (print seen)
 	 (maphash (lambda (key value) (vector-push-extend (list value) res)) seen)
-	 (list res)))
+	 (make-type-list :array res)))
 ;  (cmd unreduce () ((fun fn) (type something)) (list)
   
   (cmd ite () ((fun a) (fun b) (bool case)) ()
@@ -714,8 +717,9 @@
     ((numberp el) 'int)
     ((eq (type-of el) 'boolean) 'bool)
     ((eq (type-of el) 'null) 'bool)
-    ((listp el) 'list)
-    ((vectorp el) 'list)
+;    ((listp el) 'list)
+;    ((vectorp el) 'list)
+    ((eq (type-of el) 'type-list) 'list)
 ;    ((functionp el) 'fun)
     ((eq (type-of el) 'fun-on-stack)
      (if (fun-on-stack-is-restoring el) 'fun-restoring 'fun-nonrestoring))
