@@ -1,6 +1,6 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun test-with-stack-fn (name answer stack body)
-    `(let ((it (car (run ',body ',stack))))
+    `(let ((it (car (run ',body ,stack))))
        (if (equalp
 	    ,answer
 	    it)
@@ -40,6 +40,24 @@
 
 (test "Stack 2" 1
   1 2 3 rot rot)
+
+(test "Basic nonrestoring" 5
+  3 (5) call)
+
+(test "Basic restoring" 3
+  3 (*restoring 5) call)
+
+(test "List operations" 11
+  5 range first-and-rest 1 add swap sum add)
+
+(test "Simple maps" '(2 3 4 5 6)
+  5 range (*restoring 3 add) map (1 subtract) map)
+
+(test "Simple string" '(string . "01234")
+    5 range (48 add) map list-to-string)
+
+(test-with-stack "Simple string 2" '(string . "23456") '("01234")
+    (2 add) map)
 
 (test "Drop" 3
   3 range 4 drop (0 add) map sum)
@@ -95,12 +113,6 @@
 (test "Unknown types 3" 14
   5 range (inc arg-a multiply) map 3 get 2 add)
 
-(test "Basic nonrestoring" 5
-  3 (5) call)
-
-(test "Basic restoring" 3
-  3 (*restoring 5) call)
-
 (test "Restoring saves correctly" '(0 1 2 3 4)
   5 range dup (*restoring get) map 1 swap)
 
@@ -134,6 +146,41 @@
 (test "Zip" '(10 10 10 10 10 10)
   5 range prefixes force 5 range suffixes force zip (*exploding concatenate) map (sum) map force)
 
+(run '(split-by-newlines-to-str first-and-rest) (list (format nil "a~%b~%c~%d")))
+
+(test-with-stack "String zip"  '(STRING . "this
+test
+is a
+good
+one.") (list (format nil "this~%test~%is a~%good~%one."))
+  string-to-list dup zip transpose explode list-to-string)
+
+(test-with-stack "Remove crossword-like" '(STRING . "ecpjailjefqm
+wcvnmcpnbxmw
+    waiurh m
+vyayzwpcbb d
+kaamnlqyjl k
+spykz    e z
+wulyzqpqweet
+uvuyfdsouljw
+ dbzwdfoclzi
+ tbvetwcwgmy
+ hcafysvaqig
+ mkreykkvdef") (list (format nil "golf
+ecpjailjefqm
+wcvnmcpnbxmw
+flogwaiurhgm
+vyayzwpcbbod
+kaamnlqyjllk
+spykzgolfefz
+wulyzqpqweet
+uvuyfdsouljw
+fdbzwdfoclzi
+ltbvetwcwgmy
+ohcafysvaqig
+gmkreykkvdef"))
+  split-by-newlines-to-str first-and-rest string-to-list 32 forever zip transpose list-to-string explode unrot (*restoring rot simple-replace reverse arg-c arg-b simple-replace split-by-newlines-to-str transpose) fixpoint)
+
 (test "Blocks can mess with stack" '(1 2 3 4 5)
   5 range ((1) call add) map force)
 
@@ -141,15 +188,15 @@
   100 range (2 add) map (dup 2 subtract range (*restoring 2 add mod 0 neq) map all) filter sum)
 
 (test "Primes 2" 1161
-  102 range-from-1 butfirst (gcd 1 neq) uniq-by sum)
+  102 range-from-1 rest (gcd 1 neq) uniq-by sum)
 
 (test "Five queens 1" 10
   5 range permutations (with-index dup outer flatten (flatten) map (*restoring *exploding arg-c eq arg-c arg-a subtract abs arg-d arg-b subtract abs neq or) map all) filter length)
 
-(test-with-stack "Five queens 2" 10 (5)
+(test-with-stack "Five queens 2" 10 '(5)
   dup range permutations (*restoring with-index dup (*restoring *exploding add) map uniq length arg-b eq swap (*restoring *exploding subtract) map uniq length arg-b eq and) filter length)
 
-;; (test-with-stack "Partial sudoku" '(6 5 5 7 5 8 5 4 4 7 7 7 7 4 7 5 6 6 6 6 6 7 6 8 7 7 7 5 5 4 8 4 5 6 6 6 5 5 4 8 4 5 5 5 6 6 6 6 8 6 7 6 5 6 6 8 6 8 6 7 7 7 7 6 7 6 6 5 7 7 7 7 5 5 5 7 4 6 6 6 6)
-;;     ((#((#(0 0 4 0 0 0 0 0 8)) (#(0 9 8 3 0 0 7 0 0)) (#(5 1 0 7 0 9 0 0 4)) (#(0 0 0 5 0 2 0 0 0)) (#(0 5 0 0 0 0 0 6 0)) (#(4 0 0 6 0 1 0 0 7)) (#(7 0 0 4 0 6 0 8 2)) (#(0 0 5 9 0 0 3 4 0)) (#(8 0 0 0 0 0 9 0 0)))))
-;;     (dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force)
+(test-with-stack "Partial sudoku" '(6 5 5 7 5 8 5 4 4 7 7 7 7 4 7 5 6 6 6 6 6 7 6 8 7 7 7 5 5 4 8 4 5 6 6 6 5 5 4 8 4 5 5 5 6 6 6 6 8 6 7 6 5 6 6 8 6 8 6 7 7 7 7 6 7 6 6 5 7 7 7 7 5 5 5 7 4 6 6 6 6)
+    '(#(#(0 0 4 0 0 0 0 0 8) #(0 9 8 3 0 0 7 0 0) #(5 1 0 7 0 9 0 0 4) #(0 0 0 5 0 2 0 0 0) #(0 5 0 0 0 0 0 6 0) #(4 0 0 6 0 1 0 0 7) #(7 0 0 4 0 6 0 8 2) #(0 0 5 9 0 0 3 4 0) #(8 0 0 0 0 0 9 0 0)))
+  (dup 3 mod subtract dup 3 add swap) swap 9 range dup outer flatten (*restoring *exploding drop drop arg-a get arg-c transpose arg-b get concatenate arg-b arg-d call arg-c (*restoring rot substr) map force arg-a arg-d call substr flatten rot drop drop concatenate uniq (*restoring 0 neq) filter length) map force)
 

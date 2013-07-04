@@ -2,8 +2,6 @@
 Syntax
 ---
 
-Blocks of code
-    ({[<>]})
 
 
 ---
@@ -38,11 +36,16 @@ sort-by and arg-sort.
 
 call-and-return-n -- call a function, return the top n arguments.
 
+fixpoint at most N times
+
+
 ---
 Automatic Compression
 ---
 
 A function on the top of the stack at the end should be called with map.
+
+Right now we assume all code paths are executed on the compilation run. We may need >1.
 
 Type functions on the stack? Map and reduce could be on the same word.
 
@@ -52,6 +55,7 @@ Lots of combinations produce identical results.
  - If can statically detect arg-a and dup are identical, only use one.
  - Range butfirst => range-from-1 butfirst
 
+It doesn't make sense for an exploding block if the first argument is an integer...
 
 ---
 Code Compression
@@ -63,8 +67,16 @@ Right now the assumption is that the probability you will push an integer (or st
   is equal even if there are more builtins you could call. Maybe this isn't the case.
   This is because integers and function starts are given N% of the arithmetic space initially.
 
-Instead of length-encoding the first function, add a 1 bit to the end, and then pad to 0 mod 8.
-  Only adds 1 bit to functions on average.
+How to decide resulting type kind when you concatenate a list and a string?
+
+Other types of ints:
+  integer - what I have now -- full precision integers
+  exact - an exact decimal number, with N digits o precision (set by user)
+  float - 32 bit floting point
+  double - 64 bit floating point
+  int32 - 32 bit int (signed or unsigned)
+  int64 - 64 bit int (signed or unsigned)
+  
 
 ---
 IO
@@ -76,5 +88,3 @@ Smart parsing and dumping:
 Random
 ---
 
-When a function is not stack restoring, it should be forced right away. 
-Otherwise, we won't know the right types. It'll also be very strange to ever want it delayed.
