@@ -38,6 +38,7 @@ call-and-return-n -- call a function, return the top n arguments.
 
 fixpoint at most N times
 
+Join with newline, join with space, join with empty string
 
 ---
 Automatic Compression
@@ -67,6 +68,8 @@ Right now the assumption is that the probability you will push an integer (or st
   is equal even if there are more builtins you could call. Maybe this isn't the case.
   This is because integers and function starts are given N% of the arithmetic space initially.
 
+Function lengths are currently geometric. Should the instead be poisson? Something else?
+
 How to decide resulting type kind when you concatenate a list and a string?
 
 Other types of ints:
@@ -76,7 +79,11 @@ Other types of ints:
   double - 64 bit floating point
   int32 - 32 bit int (signed or unsigned)
   int64 - 64 bit int (signed or unsigned)
-  
+
+Right now adding one bit to an integer takes two more bits. 
+It would be good to have two kinds of integers. 
+ - One which is better for "normal" integers you might type (<1000 or so)
+ - One for "large" integers, sized in bytes.
 
 ---
 IO

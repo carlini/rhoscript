@@ -3,6 +3,11 @@
    (>= point low)
    (< point high)))
 
+(defun point-in-range-o (point low high)
+  (and
+   (>= point low)
+   (<= point high)))
+
 (defun arithmetic-encode (symbols weighted-possibles)
   (labels ((pick-point-in (low high)
 ;	     (format t "pick in ~a ~a~%" low high)
@@ -11,10 +16,10 @@
 		   (step (/ 1 2))
 		   (midpoint (/ (+ low high) 2))
 		   (emit nil))
-	       (loop while (not (and (point-in-range (+ point step) low high)
-				     (point-in-range (- point step) low high)))  do
-;		  for i from 0 to 10 do
-;		    (print (list point step))
+	       (loop while (not (and (point-in-range-o (+ point step) low high)
+				     (point-in-range-o (- point step) low high)))  do
+
+;		    (print (point-in-range midpoint point (+ point step)))
 
 		    (if (point-in-range midpoint point (+ point step))
 			(progn
@@ -133,6 +138,32 @@
 	   (push next-token resulting-bits)))
     (reverse resulting-bits)))
 
+;flb: 
+;     2 3 4 5 6
+(defun find-lower-bound (int)
+  (let ((x 0) (step 2))
+    (loop while (<= (+ x (expt 2 step)) int) do
+	 (setf x (+ x (expt 2 step)))
+	 (incf step))
+    (values step x)))
+
+(defun arithmetic-encode-integer (int)
+  (labels ((get-bits (num)
+	     (if (eq num 0) nil
+		 (cons (if (oddp num) 1 0) (get-bits (floor (/ num 2))))))
+	   (pad (int n)
+	     (if (< (length int) n)
+		 (pad (append int '(0)) n)
+		 int)))
+    (multiple-value-bind (steps bound) (find-lower-bound int)
+      (values (- steps 2) (pad (get-bits (- int bound)) steps)))))
+
+(defun arithmetic-decode-integer (bits)
+  (+
+   (reduce (lambda (a b) (+ (* a 2) b))
+	   (reverse bits) 
+	   :initial-value 0)
+   (loop for i from 2 to (1- (length bits)) sum (expt 2 i))))
 
 (defclass compressed-data nil
     ((data :accessor get-compressed-data :initarg :data)

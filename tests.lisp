@@ -146,7 +146,8 @@
 (test "Zip" '(10 10 10 10 10 10)
   5 range prefixes force 5 range suffixes force zip (*exploding concatenate) map (sum) map force)
 
-(run '(split-by-newlines-to-str first-and-rest) (list (format nil "a~%b~%c~%d")))
+(test "Blocks can mess with stack" '(1 2 3 4 5)
+  5 range ((1) call add) map force)
 
 (test-with-stack "String zip"  '(STRING . "this
 test
@@ -181,8 +182,8 @@ ohcafysvaqig
 gmkreykkvdef"))
   split-by-newlines-to-str first-and-rest string-to-list 32 forever zip transpose list-to-string explode unrot (*restoring rot simple-replace reverse arg-c arg-b simple-replace split-by-newlines-to-str transpose) fixpoint)
 
-(test "Blocks can mess with stack" '(1 2 3 4 5)
-  5 range ((1) call add) map force)
+(test "196 problem" 26448526456851
+  195 range-from-1 ((int-to-str-base-10 dup reverse dup-top-two eq rot str-to-int-base-10 swap str-to-int-base-10 unrot not (add) if) fixpoint) map sum)
 
 (test "Primes 1" 1161
   100 range (2 add) map (dup 2 subtract range (*restoring 2 add mod 0 neq) map all) filter sum)

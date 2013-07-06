@@ -317,6 +317,9 @@
   (cmd or () ((bool a) (bool b)) (bool)
        "Logical or of the top two elements of the stack."
        (or a b))
+  (cmd not () ((bool a)) (bool)
+       "Logical or of the top two elements of the stack."
+       (not a))
   (cmd and () ((bool a) (bool b)) (bool)
        "Logical and of the top two elements of the stack."
        (and a b))
@@ -426,6 +429,12 @@
 	   (to-array 
 	    (mapcar (lambda (x) (to-array x))
 		    (combine (coerce list 'list) size))))))
+  (cmd int-to-str-base-10 () ((int x)) (string)
+       (to-array (write-to-string x :base 10)))
+  (cmd int-to-str-base-16 () ((int x)) (string)
+       (to-array (write-to-string x :base 16)))
+  (cmd int-to-str-base-2 () ((int x)) (string)
+       (to-array (write-to-string x :base 2)))
 
 ; list
   (cmd list-to-string () ((list l)) (string)
@@ -522,6 +531,16 @@
 	 (next
 	  (if (not (eq index 0))
 	      (vector-push-extend each result)))))
+  (cmd last () ((anylist l)) (type)
+       "Get the first element of a list."
+       (with-forced l lst
+	 (list-get l (1- (length lst)))))
+  (cmd butlast ((:a anylist)) ((:a l)) (:a)
+       "Get every element other than the first element of a list."
+       (list-to-list-iter l
+	 (next
+	  (if (not (eq (list-get l (1+ index)) null-symbol))
+	      (vector-push-extend each result)))))
   (cmd set-minus () ((list takeaway) (list given)) (list)
        "The set difference of two lists; all of the elements in the second list, execpt
         for those which occur in the first list."
@@ -568,11 +587,11 @@
 		 result))
 	      (incf index))))))
 	       
-  (cmd length () (((either list string) l)) (int)
+  (cmd length () ((anylist l)) (int)
        "Compute the length of a list."
        (with-forced l list
 	 (length list)))
-  (cmd concatenate ((:a (either list string))) ((:a a) (:a b)) (:a)
+  (cmd concatenate ((:a anylist)) ((:a a) (:a b)) (:a)
        "Concatenate two lists."
        ;; fixmeinfinite
        (let ((res (new-array)))
@@ -583,7 +602,7 @@
 	   (loop for j from 0 to (1- (length list)) do
 		(vector-push-extend (aref list j) res)))
 	 (make-type-list :array res)))
-  (cmd prefixes () ((list l)) (list)
+  (cmd prefixes ((:a anylist)) ((:a l)) (:a)
        "Compute all of the prefixes of a list."
        (list-to-list-iter l
 	 (initially
@@ -608,7 +627,7 @@
 		  (setf (gethash each seen) t)
 		  (vector-push-extend each result)))))))
 	  
-  (cmd suffixes () ((list l)) (list)
+  (cmd suffixes ((:a anylist)) ((:a l)) (:a)
        "Compute all of the suffixes of a list."
        ;; better to not force and present in reversed order?
        (with-forced l list
@@ -618,7 +637,7 @@
 	      (vector-push-extend (make-type-list :array (subseq (type-list-array l) index length)) result))
 	     (finally
 	      (vector-push-extend (make-type-list :array (new-array)) result))))))
-  (cmd permutations () ((list l)) (list)
+  (cmd permutations ((:a anylist)) ((:a l)) (:a)
        "Compute all of the permutations of a list."
        (with-forced l list
 	 (labels ((permute (list)
@@ -633,6 +652,15 @@
 			(cons (car list) (without (1- i) (cdr list))))))
 	   (to-array (mapcar (lambda (x) (to-array x))
 			     (permute (coerce list 'list)))))))
+  (cmd join ((:a anylist)) ((list joinon) (list l)) (list)
+       (list-to-list-iter l
+	 (next
+	  (loop for e across (with-forced each ea ea) do 
+	       (vector-push-extend e result))
+	  (if (not (eq (list-get l (1+ index)) null-symbol))
+	      (loop for e across (with-forced joinon j j) do 
+	       (vector-push-extend e result))))))
+	      
   (cmd force () ((list l)) (list)
        "Force a list to be evaluated completely."
        (with-forced l list
@@ -643,6 +671,8 @@
   (cmd puts () ((string s)) ()
        (with-forced s str
 	 (format t "~a" (map 'string #'code-char str))))
+  (cmd str-to-int-base-10 () ((string s)) (int)
+       (parse-integer (to-string s)))
   (cmd split-by-whitespace () ((string s)) (list)
        (with-forced s _
 	 (to-array 
@@ -689,6 +719,10 @@
 	       (cl-ppcre:regex-replace-all (list :sequence (to-string replace-this))
 					   (to-string replace-in)
 					   (to-string replace-with))))))))
+  (cmd strip () ((string s)) (list)
+       (with-forced s _
+	 (to-array
+	  (cl-ppcre:regex-replace "^\\W*(\\w|\\w.*\\w)\\W*$" (to-string s) "\\1"))))
 
 ; fun
   (cmd call () ((fun f)) ()
@@ -932,7 +966,6 @@
 ;; actual mapping of uncompressed code -> compressed code.
 (defvar *compiled-code* nil)
 
-
 ;; Do the actual unification for the type matching (below).
 (defun unify (one-type match-with bindings)
   (let ((o-match-with match-with))
@@ -1091,7 +1124,7 @@
 	 (next-token (uncompress-once-from input weights)))
     (when (eq next-token 'it-is-an-integer)
 	(use-up-data input)
-	(setf next-token (list 'int (uncompress-once-from input '(:geometric-mode 9/10)))))
+	(setf next-token (list 'int (uncompress-once-from input '(:geometric-mode 1/2)))))
     (when (eq (car next-token) 'fun)
 	(use-up-data input)
 	(setf next-token (list 'compressed-function
@@ -1112,7 +1145,8 @@
 	       (list 'builtin cmd)))))
       (int
        (use-up-data input)
-       next-token)
+       (let ((resulting-bits (arithmetic-extract-n-bits input (+ 2 (second next-token)))))
+	 (list 'int (arithmetic-decode-integer resulting-bits))))
       (otherwise
        (error "oh noes"))))
   nil))
@@ -1174,26 +1208,6 @@
 ;		    (format t "match ~a ~a ~a ~a~%" full args matching results)
 		    
 		  (case decoded
-;		    (dup
-;		     (push (car types) types)
-;		     (push '(builtin dup) commands))
-;		    (swap
-;		     (let ((a (pop types)) (b (pop types)))
-;		       (push a types)
-;		       (push b types))
-;		     (push '(builtin swap) commands))
-;		    (rot
-;		     (let ((a (pop types)) (b (pop types)) (c (pop types)))
-;		       (push a types)
-;		       (push c types)
-;		       (push b types))
-;		     (push '(builtin rot) commands))
-;		    (unrot
-;		     (let ((a (pop types)) (b (pop types)) (c (pop types)))
-;		       (push b types)
-;		       (push a types)
-;		       (push c types))
-;		     (push '(builtin unrot) commands))
 		    (arg-a
 		     (push (first argstack-types) types)
 		     (push '(builtin arg-a) commands))
@@ -1456,19 +1470,22 @@
 		(reduce #'append
 			(mapcar
 			 (lambda (x)
-			   (if (eq (car x) 'fun)
-			       (let ((encoded (arithmetic-encode-body 
-					       (subseq (cadr x) 
-						       (length (get-modifiers (cadr x)))))))
-				 `((fun ,(get-modifiers (cadr x)))
-				   (geometric-number ,(length encoded))
-				   ,@(mapcar (lambda (x) `(single-bit ,x)) encoded)))
-			       (if (eq (car x) 'int)
-				   `((int)
-				     (geometric-number ,(cadr x)))
-				   (list x))))
+			   (case (car x)
+			     (fun
+			      (let ((encoded (arithmetic-encode-body 
+					      (subseq (cadr x) 
+						      (length (get-modifiers (cadr x)))))))
+				`((fun ,(get-modifiers (cadr x)))
+				  (geometric-number ,(length encoded) 9/10)
+				  ,@(mapcar (lambda (x) `(single-bit ,x)) encoded))))
+			      (int
+			       (multiple-value-bind (n bits) (arithmetic-encode-integer (cadr x))
+				 `((int)
+				   (geometric-number ,n 1/2)
+				   ,@(mapcar (lambda (x) `(single-bit ,x)) bits))))
+			      (otherwise
+			       (list x))))
 			 function-tree))))
-;		(list '(eof))))
 	   (get-modifiers (body)
 		    (loop while (eq (car (car body)) 'fun-modifier)
 		       collect (cadr (pop body))))
@@ -1491,7 +1508,7 @@
 			   `(,@(make-function-weights)
 			       ((other) 9)))
 			(geometric-number
-			 `(:geometric-mode 9/10))
+			 `(:geometric-mode ,(third elt)))
 			(single-bit
 			 `(((single-bit 0) 1) ((single-bit 1) 1)))
 			(builtin
@@ -1604,7 +1621,7 @@
 	 (answer (car answer-and-compiled))
 	 (compiled (cdr answer-and-compiled))
 	 (*fun-count* 0))
-    (format t "~%The compiled version is ~a of size ~a~%" compiled (length compiled))
+    (format t "~%The compiled version is ~a of size ~a~%" compiled (/ (length compiled) 2))
 ;    (print answer)
     (let ((run-answer (run-bytes compiled init-stack)))
       (format t "~%Ans1: ~a;~%Ans2: ~a" answer run-answer)
@@ -1678,12 +1695,6 @@
 
 ;(sb-ext:save-lisp-and-die "compiler" :executable t :purify t :toplevel 'run-it-now)
       
-;(run '(5 range (1 add) map))  
-;(run '((*restoring 5) call))
-;(run '(5 range 2 get 2 add))
-;(run '(87))
-;(run '(1 2))
-
 ;(time
 ;[5 range prefixes force 5 range suffixes force zip (*exploding concatenate) map (sum) map force])
 
@@ -1781,3 +1792,21 @@
 ;(run '(simple-replace) '("q" "a" "aa"))
 
 ;(run '(split-by-newlines-to-str first-and-rest) (list (format nil "a~%b~%c~%d")))
+;; (run '(split-by-newlines-to-str first-and-rest string-to-list 32 forever zip transpose list-to-string explode unrot (*restoring rot simple-replace reverse arg-c arg-b simple-replace split-by-newlines-to-str transpose) fixpoint) (list (format nil "lisp
+;; plispbxrarfh
+;; sccolispeofn
+;; glnnkrfuelvq
+;; fmnuptdnfivc
+;; mbpsiljvosqi
+;; rpyakjzuhpwu
+;; hskrivpzwxoy
+;; tithyncyetwh
+;; ilwwelispylf
+;; iamyebtllzcf
+;; epsilbykvvxo
+;; fbghrhxnrwhw")))
+
+
+;(run '(
+
+
