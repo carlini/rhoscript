@@ -1,3 +1,22 @@
+;;;; tests.lisp -- a set of tests for the rhoScript compiler.
+
+;;;; Copyright (C) 2013, Nicholas Carlini.
+;;;;
+;;;; This file is part of rhoScript.
+;;;;
+;;;; rhoScript is free software: you can redistribute it and/or modify
+;;;; it under the terms of the GNU General Public License as published by
+;;;; the Free Software Foundation, either version 3 of the License, or
+;;;; (at your option) any later version.
+;;;;
+;;;; rhoScript is distributed in the hope that it will be useful,
+;;;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;;;; GNU General Public License for more details.
+;;;;
+;;;; You should have received a copy of the GNU General Public License
+;;;; along with rhoScript.  If not, see <http://www.gnu.org/licenses/>.
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun test-with-stack-fn (name answer stack body)
     `(let ((it (car (run ',body ,stack))))
@@ -151,6 +170,9 @@
 
 (test "Blocks can mess with stack" '(1 2 3 4 5)
   5 range (*non-restoring (*non-restoring 1) call add) map force)
+
+(test "Infinite list 1" '3402
+  naturals prefixes (suffixes) map flatten uniq (sum) map 100 take sum)
 
 (test-with-stack "String zip"  '(STRING . "this
 test
