@@ -283,6 +283,13 @@
        (creating-new-list
 	 (next
 	  (vector-push-extend arg result))))
+  (cmd naturals () () (list)
+       "Return a sequence of all the natural numbers (0, 1, 2, 3...)."
+       (let ((i 0))
+	 (creating-new-list
+	   (next
+	    (vector-push-extend i result)
+	    (incf i)))))
   (cmd box () ((type arg)) (list)
        "Place an element in a list containing only itself."
        (creating-new-list
@@ -382,6 +389,13 @@
 	      (setf a (mod b a))
 	      (setf b tmp))
 	 b))
+  (cmd take ((:a anylist)) ((int a) (:a l)) (:a)
+       "Take the first n elements of a list."
+       (let ((index 0))
+	 (creating-new-list
+	   (next
+	    (if (<= (incf index) a)
+		(vector-push-extend (list-get l (1- index)) result))))))
   (cmd implode () ((int count)) (list) :messy
        "Pops the top count elements off the stack and makes a list out of them."
        (let ((a (new-array)))
@@ -776,7 +790,7 @@
 		(setf init (funcall fn state 1 (list el init))))
 	   init))))
   (cmd fold () ((fun fn) (type init) (list l)) (type)
-       "Identical to reduce, but specifying a different initial value."
+       "Identical to reduce, but specifying a different initial value. This is a left-fold."
        (save-arguments
 	 (with-forced l list
 	   (loop for el across list do
@@ -890,7 +904,7 @@
 		   (mapcar
 		    (lambda (cmd)
 		      (if (eq (car cmd) 'fun)
-			  (list 'fun (helper cmd))
+			  (list 'fun (helper cmd) (third cmd))
 			  cmd))
 		    (cadr input)))
 		  defuns)
@@ -939,6 +953,8 @@
      (let* ((fnid (car input))
 	    (body (cadr input))
 	    (more-block-kinds nil))
+       (if (eq fnid 'fn-1)
+	   (push '*non-restoring more-block-kinds))
        (loop while (eq (caar body) 'fun-modifier) do
 	    (push (cadr (car body)) more-block-kinds)
 	    (setf body (cdr body)))
@@ -1085,10 +1101,11 @@
     (incf (caddr (car (last input))))
     (if (cddr input)
 	(cons (append (command-rewriter (car input) full-command inputs)
-		    `((fun ,new-name)
+		    `((fun ,new-name (*non-restoring))
 		      (builtin call)))
 	      (car (create-defuns
-		    (list (list new-name (cons '(fun-modifier *no-arguments)
+		    (list (list new-name (append '((fun-modifier *no-arguments)
+						   (fun-modifier *non-restoring))
 					       (cdr input)))))))
 	(list (command-rewriter (car input) full-command inputs)))))
 
@@ -1102,8 +1119,8 @@
 	(nth (car command-abbrv) possible-commands))))
 
 (defun make-function-weights (&optional (ct 1))
-    (let* ((valids '((nil 8) ((*restoring) 16) ((*exploding) 1) 
-		     ((*restoring *exploding) 2)))
+    (let* ((valids '(((*non-restoring) 8) (() 16) ((*exploding) 2)
+		     ((*non-restoring *exploding) 1)))
 	   (total (loop for el in valids sum (second el))))
       (loop for el in valids
 	 collect `((fun ,(car el)) ,(/ (* ct (second el)) total)))))
@@ -1185,9 +1202,9 @@
 		  (push cmd commands))
 		 (fun-as-list
 ;		  (format t "AND PUSH FUN1 ~a ~a~%" (third cmd) (member '*restoring (third cmd)))
-		  (push (if (member '*restoring (third cmd))
-			    'fun-restoring
-			    'fun-nonrestoring)
+		  (push (if (member '*non-restoring (third cmd))
+			    'fun-nonrestoring
+			    'fun-restoring)
 			types)
 ;		  (print types)
 		  (push cmd commands))
@@ -1242,7 +1259,7 @@
 ;			(new-name-maker (intern (concatenate 'string 
 ;							     (symbol-name new-name) "-MAKER"))))
 		   (setf cont nil)
-		   (push (list 'fun new-name) commands)
+		   (push (list 'fun new-name '(*non-restoring)) commands)
 		   (push '(builtin call) commands)
 		   ;; (push `(verbatim 
 		   ;; 	   (progn
@@ -1283,7 +1300,7 @@
 			  (create-defuns
 			   (list (list new-name
 				       (remaining-work input)))
-			   '(*no-arguments)))))
+			   '(*no-arguments *non-restoring)))))
 		   (setf cont nil)))))
 ;    (format t "~%COMMANDS IS ~a~%"  (reverse commands))
     (cons (reverse commands)
@@ -1304,16 +1321,23 @@
 	  (int
 	   `(push ,(cadr decoded) stack))
 	  (fun
-;	   (print decoded)
 ;	   (error 'hi 'bye)
-	   `(push (make-fun-on-stack :fun #',(cadr decoded) :is-restoring ',(caddr decoded)) stack))
+	   (format t "~%we're making the function on the stack ~a~%" decoded)
+	   (assert (eq (length decoded) 3))
+	   `(push (make-fun-on-stack 
+		   :fun #',(cadr decoded) 
+		   :is-restoring ',(null (find '*non-restoring (caddr decoded)))) stack))
 	  (fun-as-list
+	   (assert (eq (length decoded) 3))
+	   (format t "~%2we're making the function on the stack ~a~%" decoded)
 	   (let ((id (fresh-fun-name)))
 	     (push
 	      (car (create-defuns (list (cons id (list (list (list (cadr decoded)))))) 
 				  (caddr decoded))) 
 	      defuns)
-	     `(push (make-fun-on-stack :fun #',id :is-restoring ,(not (null (find '*restoring (caddr decoded))))) stack)))
+	     `(push (make-fun-on-stack 
+		     :fun #',id 
+		     :is-restoring ,(null (find '*non-restoring (caddr decoded)))) stack)))
 	  (list
 	   `(push '(,(cadr decoded)) stack))
 	  (builtin
@@ -1363,9 +1387,9 @@
 ;  (print (list args stack))
 ;  (print kinds)
   (let* ((first-pass
-	  (if (member '*restoring kinds)
-	      (append args (state-base-stack state))
-	      (append args stack)))
+	  (if (member '*non-restoring kinds)
+	      (append args stack)
+	      (append args (state-base-stack state))))
 	 (second-pass
 	  (if (member '*exploding kinds)
 	     (append (coerce (with-forced (car first-pass) list list) 'list)
@@ -1403,7 +1427,8 @@
 	  `(lambda (state nret args)
 ;	     (declare (ignore nret))
 	     (assert (equal nret ,nret)) ;; if this fails, called with different nret
-	     ,@(if (member '*restoring block-kinds)
+;	     (format t "sdfsdfsdf ~a~%" (not (member '*non-restoring ',block-kinds)) )
+	     ,@(if (not (member '*non-restoring block-kinds))
 		   '((push stack restore-stack)))
 	     
 	     (let ((corrected (correct-stack ',block-kinds args stack state)))
@@ -1426,7 +1451,7 @@
 			       (0 'nil)
 			       (1 '(pop stack))
 			       (2 (cons 'list (loop for i from 1 to nret collect '(pop stack)))))))
-	       ,@(if (member '*restoring block-kinds)
+	       ,@(if (not (member '*non-restoring block-kinds))
 		     `((setf stack (pop restore-stack))))
 	       res))))
     (log-uncompressed fnid final-part uncompressed-code)
@@ -1546,7 +1571,10 @@
 ;; Converts the high-level language to commands tagged by their type.
 (defun add-types-to-user-input (input)
   (if (listp input)
-      (list 'fun (mapcar #'add-types-to-user-input input))
+      (let ((deeper (mapcar #'add-types-to-user-input input)))
+	(list 'fun deeper (loop for e in deeper 
+			     while (eq (car e) 'fun-modifier)
+			     collect (cadr e))))
       (if (and (symbolp input) 
 	       (eq (char (symbol-name input) 0) #\*))
 	  (list 'fun-modifier input)
@@ -1563,7 +1591,8 @@
     (labels ((tag-input (in)
 	       (if (eq (car in) 'fun)
 		   (list 'fun (append (mapcar #'tag-input (cadr in))
-				      (list (list 'compile-tag (incf id) 0))))
+				      (list (list 'compile-tag (incf id) 0)))
+			 (caddr in))
 		   in))
 	     (do-replace (tagged replace-with)
 	       (if (eq (car tagged) 'fun)
@@ -1588,6 +1617,7 @@
       (let* ((with-types (add-types-to-user-input input))
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
+	(print tagged)
 	(setf (symbol-function 'decompress) #'commands-to-commands)
 	(let ((answer (eval (run-compiled tagged init-stack))))
 	  (cons answer 
