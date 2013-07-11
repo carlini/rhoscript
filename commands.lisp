@@ -80,7 +80,7 @@
 	      body)))
 	`(defun make-commands ()
 	   (setf *full-commands* ',body)
-	   (setf *commands* 'the-commands)
+	   (setf *commands* ',the-commands)
 	   (setf *command-info*
 		 ,(cons 'list
 			(mapcar (lambda (x)
@@ -158,6 +158,35 @@
 (defmacro save-arguments (&body body)
   `(let ((state (make-state :base-stack stack)))
      ,@body))
+
+(defun magic-read (s &optional (outer-flatten t) (inner-flatten t) (read-item t) (touch-lines t))
+  (let* ((lines (cl-ppcre:split "[\\r\\n]" s))
+	 (parsed nil))
+    (setf parsed
+	  (mapcar 
+	   (lambda (x)  (cl-ppcre:split "[\\W+]" x))
+	   lines))
+    (if (and touch-lines
+	     (every (lambda (x) (eq (length x) (length (car parsed))))
+		    parsed))
+	(progn
+	  (if (and read-item
+		   (every (lambda (x) x) (loop for row in parsed for e in row 
+					    collect (cl-ppcre:scan "^[0-9]+$" e))))
+	      (setf parsed (loop for row in parsed collect
+				(loop for e in row collect
+				     (parse-integer e)))))
+	  (setf parsed
+		(mapcar (if (and (= (length (car parsed)) 1) inner-flatten)
+			    #'car 
+			    #'to-array)
+			parsed)))
+	(setf parsed lines))
+    
+    (if (and (= (length lines) 1) outer-flatten)
+	(car parsed)
+	(to-array
+	 parsed))))
 
 (commands
 ; type
@@ -288,23 +317,29 @@
        "Multiplies the top two elements onf the stack."
        (* a b))
   (cmd subtract () ((int a) (int b)) (int)
-       "Subtracts from the second-to-top by the top of the stak."
+       "Subtracts from the second-to-top by the top of the stack."
        (- b a))
   (cmd swapsubtract () ((int a) (int b)) (int)
-       "Subtracts from the top by the second-to-top of the stak."
+       "Subtracts from the top by the second-to-top of the stack."
        (- a b))
   (cmd divide () ((int a) (int b)) (int)
-       "Divides from the second-to-top by the top of the stak."
+       "Divides from the second-to-top by the top of the stack."
        (floor (/ b a)))
   (cmd swapdivide () ((int a) (int b)) (int)
-       "Divides from the top by the second-to-top of the stak."
+       "Divides from the top by the second-to-top of the stack."
        (floor (/ a b)))
   (cmd pow () ((int a) (int b)) (int)
        "Multiplies the top two elements onf the stack."
        (expt b a))
+  (cmd square () ((int a)) (int)
+       "Square the top element of the stack."
+       (* a a))
   (cmd mod () ((int a) (int b)) (int)
-       "Computes the remainder of the second-to-top when divided by the top of the stak."
+       "Computes the remainder of the second-to-top when divided by the top of the stack."
        (mod b a))
+  (cmd divides () ((int a) (int b)) (bool)
+       "Test if the top element divides the secont-to-top element"
+       (= (mod b a) 0))
   (cmd abs () ((int a)) (int)
        "Computes the absolute value of the top of the stack."
        (abs a))
@@ -611,7 +646,7 @@ That is, if 'some_list i get j get' is the same as 'some_list transpose j get i 
 			(cons (car list) (without (1- i) (cdr list))))))
 	   (to-array (mapcar (lambda (x) (to-array x))
 			     (permute (coerce list 'list)))))))
-  (cmd join ((:a anylist)) ((list joinon) (list l)) (list)
+  (cmd join ((:a anylist)) ((:a joinon) (:a l)) (:a)
        "Flatten out a list, placing a second list in between each sublist."
        (list-to-list-iter l
 	 (next
@@ -620,7 +655,13 @@ That is, if 'some_list i get j get' is the same as 'some_list transpose j get i 
 	  (if (not (eq (list-get l (1+ index)) null-symbol))
 	      (loop for e across (with-forced joinon j j) do 
 	       (vector-push-extend e result))))))
-	      
+  (cmd intersperse ((:a anylist)) ((type item) (:a l)) (:a)
+       "Intersperse an item in a list."
+       (list-to-list-iter l
+	 (next
+	  (vector-push-extend each result)
+	  (if (not (eq (list-get l (1+ index)) null-symbol))
+	      (vector-push-extend item result)))))
   (cmd force () ((list l)) (list)
        "Force a list to be evaluated completely."
        (with-forced l list
@@ -639,29 +680,16 @@ That is, if 'some_list i get j get' is the same as 'some_list transpose j get i 
        "Attempt to read the string in to the appropriate data structures. Try hard to do
  \"the right thing\" whenever possible. Types are entirely data-dependent, and this function
  might behave incorrectly on some inputs."
-       (let* ((lines (cl-ppcre:split "[\\r\\n]" (to-string s)))
-	      (parsed nil))
-	 (setf parsed
-	       (mapcar 
-		(lambda (x)  (cl-ppcre:split "[\\W+]" x))
-		lines))
-	 (if (every (lambda (x) (eq (length x) (length (car parsed))))
-		    parsed)
-	     (progn
-	       (if (every (lambda (x) x) (loop for row in parsed for e in row 
-					    collect (cl-ppcre:scan "^[0-9]+$" e)))
-		   (setf parsed (loop for row in parsed collect
-				     (loop for e in row collect
-					  (parse-integer e)))))
-	       (setf parsed
-		     (mapcar (if (= (length (car parsed)) 1) #'car #'to-array)
-			     parsed)))
-	     (setf parsed lines))
-	 (if (= (length lines) 1)
-	     (to-array
-	      (car parsed))
-	     (to-array
-	      parsed))))
+       (magic-read (to-string s)))
+  (cmd magic-read-kind () ((int how) (string s)) (type)
+       "Read the string in to the appropriate data structures, as directed by the user by flags.
+A 1 in the low bit indicates that if there is only one line, flatten the array once.
+A 1 in the second bit indicates that if there is a line with only one word, flatten that array.
+A 1 in the third bit indicates words should not attempt to be parsed to their kind if possible.
+A 1 in the fourth bit indicates that lines should not attempt to be read at all."
+       (labels ((zero (x) (= x 0)))
+	 (magic-read (to-string s) (not (zero (logand how 1))) (not (zero (logand how 2)))
+		     (zero (logand how 4)) (zero (logand how 8)))))
 	     
   (cmd split-by-whitespace () ((string s)) (list)
        "Split a string to a list of strings, splitting on any whitespace."
