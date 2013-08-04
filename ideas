@@ -85,6 +85,12 @@ It would be good to have two kinds of integers.
  - One which is better for "normal" integers you might type (<1000 or so)
  - One for "large" integers, sized in bytes.
 
+Try the program "asdf" (70 lt) map. It will error becase t is not of type int.
+ - Right now, after mapping, we convert to a string.
+ - In the future, we should only convert to a string /if/ it would be valid.
+ - This breaks type inference, unless we know the type of the function.
+ 
+
 ---
 IO
 ---

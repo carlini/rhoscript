@@ -203,6 +203,7 @@
 ;	  (format t "AAA ~a ~a ~a ~%" args desc 
 ;		  (result-from-type-description (command-res full) desc))
 	  (let ((has-str (result-from-type-description (command-res full) desc)))
+;	    (print has-str)
 	    (when (and (member 'string has-str) (not (member 'string (command-res full))))
 	      (assert (<= (position 'string has-str) 1))
 	      (when (eq (position 'string has-str) 0)
@@ -289,6 +290,10 @@
 			types)
 ;		  (print types)
 		  (push cmd commands))
+		 ;; for now, raw == string.
+		 (raw
+		  (push 'string types)
+		  (push (list 'list (as-string (to-array (raw-data (cadr cmd))))) commands))
 		 (list
 		  (push 'list types)
 		  (push cmd commands))
@@ -383,14 +388,18 @@
   (if (has-more-data input)
   (let* ((possible-commands (find-possible-commands types))
 	 (count (length possible-commands))
-	 (weights `(,@(make-function-weights count)
-		    (it-is-an-integer ,count)
-		    ,@(loop for i from 0 to (1- count) 
-			 collect `((builtin (,i . ,count)) 8))))
+	 (weights `(,@(make-function-weights (* 9/10 count))
+		      (it-is-an-integer ,(* 9/10 count))
+		      (it-is-raw ,(* 2/10 count))
+		       ,@(loop for i from 0 to (1- count) 
+			    collect `((builtin (,i . ,count)) 8))))
 	 (next-token (uncompress-once-from input weights)))
     (when (eq next-token 'it-is-an-integer)
 	(use-up-data input)
 	(setf next-token (list 'int (uncompress-once-from input '(:geometric-mode 1/2)))))
+    (when (eq next-token 'it-is-raw)
+	(use-up-data input)
+	(setf next-token (list 'raw (uncompress-once-from input '(:geometric-mode 1/2)))))
     (when (eq (car next-token) 'fun)
 	(use-up-data input)
 	(setf next-token (list 'compressed-function
@@ -409,11 +418,25 @@
 	     (progn
 	       (use-up-data input)
 	       (list 'builtin cmd)))))
+      (raw
+       (use-up-data input)
+       (let ((resulting-bits (arithmetic-extract-n-bits input (* 8 (second next-token)))))
+;	 (print resulting-bits)
+	 (list 'raw
+	       (make-type-raw
+		:data
+
+	       (loop for el from 1 to (second next-token) collect
+		    (reduce
+		     (lambda (a b) (+ (* a 2) b))
+		     (reverse (loop for el from 1 to 8 collect (pop resulting-bits)))))))))
+       
       (int
        (use-up-data input)
        (let ((resulting-bits (arithmetic-extract-n-bits input (+ 2 (second next-token)))))
 	 (list 'int (arithmetic-decode-integer resulting-bits))))
       (otherwise
+       (print next-token)
        (error "oh noes"))))
   nil))
 
@@ -456,6 +479,9 @@
 			types)
 ;		  (print types)
 		  (push cmd commands))
+		 (raw
+		  (push 'string types)
+		  (push (list 'list (as-string (to-array (raw-data (cadr cmd))))) commands))
 		 (list
 		  (push 'list types)
 		  (push cmd commands))
@@ -551,7 +577,7 @@
 		     :fun #',id 
 		     :is-restoring ,(null (find '*non-restoring (caddr decoded)))) stack)))
 	  (list
-	   `(push '(,(cadr decoded)) stack))
+	   `(push ,(cadr decoded) stack))
 	  (builtin
 	   (let* ((full (find-command-by-name (cadr decoded) *command-info*))
 		  (args (command-args full))
@@ -716,6 +742,14 @@
 				 `((int)
 				   (geometric-number ,n 1/2)
 				   ,@(mapcar (lambda (x) `(single-bit ,x)) bits))))
+			      (raw
+			       `((raw)
+				 (geometric-number ,(length (raw-data (cadr x))) 1/2)
+				 ,@(loop for e in (raw-data (cadr x)) append
+					(loop for i from 0 to 7 collect
+					     `(single-bit ,(if (eq 0 (logand e (expt 2 i)))
+							       0
+							       1))))))
 			      (otherwise
 			       (list x))))
 			 function-tree))))
@@ -735,18 +769,20 @@
 		 (loop for elt in flat-function collect
 		      (case (car elt)
 			(int
-			 `(((funs) 1) ((int) 1) ((other) 8)))
+			 `(((funs) 9) ((int) 9) ((raw) 2) ((other) 80)))
 			(fun
 ;			 (format t "asdfasdfadsf ~a ~a" elt (make-function-weights))
-			   `(,@(make-function-weights)
-			       ((other) 9)))
+			   `(,@(make-function-weights 9)
+			       ((other) 91)))
+			(raw
+			 `(((funs) 9) ((int) 9) ((raw) 2) ((other) 80)))
 			(geometric-number
 			 `(:geometric-mode ,(third elt)))
 			(single-bit
 			 `(((single-bit 0) 1) ((single-bit 1) 1)))
 			(builtin
 			 (let ((count (cdadr elt)))
-			   `((functhing ,count) (integers ,count)
+			   `((otherstuff ,(* count 2))
 			     ,@(loop for i from 0 to (1- count) collect
 				    `((builtin (,i . ,count)) 8))))))))))))
 
@@ -795,6 +831,13 @@
 ;; Also returns the answer we got from here, to make sure it's the same as
 ;; the answer we get when we actually run the program.
 (defun compile-by-running (input init-stack)
+  (labels ((fix-raw (i)
+	     (if (listp i)
+		 (mapcar #'fix-raw i)
+		 (if (stringp i)
+		     (make-type-raw :data (loop for e across i collect (char-code e)))
+		     i))))
+    (setf input (fix-raw input)))
   (let ((id 0))
     (labels ((tag-input (in)
 	       (if (eq (car in) 'fun)
@@ -849,6 +892,8 @@
 		e)
 	       ((stringp e)
 		(to-array e))
+	       ((listp e)
+		(make-type-raw :data e))
 	       ((vectorp e)
 		(to-array (loop for a across e collect (fix-init a)))))))
     (setf init-stack (mapcar #'fix-init init-stack)))
@@ -874,6 +919,8 @@
 		e)
 	       ((stringp e)
 		(make-type-list :array e :kind 'string))
+	       ((listp e)
+		(make-type-raw :data e))
 	       ((vectorp e)
 		(to-array (loop for a across e collect (fix-init a)))))))
        (let ((init-stack (mapcar #'fix-init ',init-stack)))
@@ -894,6 +941,8 @@
     (string
      (with-forced x _
        (cons 'string (to-string x))))
+    (raw
+     (cons 'raw (raw-data x)))
     (list
 ;     (print x)
      (with-forced x list
@@ -1044,4 +1093,4 @@
 
 
 
-(run '(5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length))
+;(run '(5 dup range permutations (with-index dup (*exploding add) map uniq length arg-b eq swap (*exploding subtract) map uniq length arg-b eq and) filter length))

@@ -260,13 +260,20 @@
        (creating-new-list
 	 (initially
 	  (vector-push-extend arg result))))
-  (cmd cons () ((type arg) (list l)) (list)
+  (cmd cons ((:a anylist)) ((type arg) (:a l)) (:a)
        "Add an item to the front of a list."
        (list-to-list-iter l
 	 (initially
 	  (vector-push-extend arg result))
 	 (next
 	  (vector-push-extend each result))))
+  (cmd rcons ((:a anylist)) ((type arg) (:a l)) (:a)
+       "Add an item to the end of a list."
+       (list-to-list-iter l
+	 (next
+	  (vector-push-extend each result))
+	 (finally
+	  (vector-push-extend arg result))))
   (cmd member () ((type arg) (list l)) (bool)
        "Test if an item is a member of a list."
        (with-forced l list
@@ -301,6 +308,12 @@
   (cmd gt () ((int a) (int b)) (bool)
        "Checks if the first argument is larger than or equal to the second."
        (not (>= a b)))
+  (cmd lt () ((int a) (int b)) (bool)
+       "Checks if the first argument is less than the second."
+       (>= a b))
+  (cmd lte () ((int a) (int b)) (bool)
+       "Checks if the first argument is less than or equal to the second."
+       (> a b))
   (cmd add () ((int a) (int b)) (int)
        "Adds the top two elements onf the stack."
        (+ a b))
@@ -367,6 +380,13 @@
 	   (next
 	    (if (<= (incf index) a)
 		(vector-push-extend (list-get l (1- index)) result))))))
+  (cmd untake ((:a anylist)) ((int a) (:a l)) (:a)
+       "Take all but the first n elements of a list."
+       (let ((index 0))
+	 (creating-new-list
+	   (next
+	    (if (> (incf index) a)
+		(vector-push-extend (list-get l (1- index)) result))))))
   (cmd implode () ((int count)) (list) :messy
        "Pops the top count elements off the stack and makes a list out of them."
        (let ((a (new-array)))
@@ -399,7 +419,7 @@
 	 (loop for i from start to (1- end) do
 	      (vector-push-extend (list-get l i) arr))
 	 (make-type-list :array arr)))
-  (cmd combinations () ((int size) (list l)) (list)
+  (cmd combinations ((:a anylist)) ((int size) (:a l)) (:a)
        "Compute all of the combinations of a list."
        (with-forced l list
 	 (labels ((combine (lst sz)
@@ -503,7 +523,7 @@
   (cmd sort () ((list l)) (list)
        "Sorts the elements of a list."
        (with-forced l list
-	 (list (sort list #'<))))
+	 (sort list #'<)))
   (cmd reverse ((:a anylist)) ((:a l)) (:a)
        "Reverses a list."
        (with-forced l list
@@ -547,10 +567,10 @@
   (cmd any () ((list l)) (bool)
        "Tests if any of the elements in a list are true."
        (not (loop for i from 0 until (eq (list-get l i) null-symbol) never (list-get l i))))
-  (cmd all () ((list l)) (bool)
+  (cmd all () ((anylist l)) (bool)
        "Tests if all of the elements in a list are true."
        (loop for i from 0 until (eq (list-get l i) null-symbol) always (list-get l i)))
-  (cmd zip () ((list a) (list b)) (list)
+  (cmd zip ((:a anylist)) ((:a a) (:a b)) (:a)
        "Takes two lists and forms a new list, pairing up elements together."
        (let ((i 0))
 	 (creating-new-list
@@ -646,6 +666,17 @@ That is, if 'some_list i get j get' is the same as 'some_list transpose j get i 
 			(cons (car list) (without (1- i) (cdr list))))))
 	   (to-array (mapcar (lambda (x) (to-array x))
 			     (permute (coerce list 'list)))))))
+  (cmd rotations ((:a anylist)) ((:a l)) (:a)
+       "Compute all of the rotations of a list."
+       (with-forced l list
+	 (labels ((rotate (list i)
+		    (append (subseq list i (length list))
+			     (subseq list 0 i)))
+		  (rotations (list)
+		    (to-array
+		     (loop for i from 0 to (1- (length list)) collect
+			  (to-array (rotate list i))))))
+	   (rotations (coerce list 'list)))))
   (cmd join ((:a anylist)) ((:a joinon) (:a l)) (:a)
        "Flatten out a list, placing a second list in between each sublist."
        (list-to-list-iter l
@@ -789,7 +820,7 @@ stack, returning the top element of the stack."
 		    (if (>= value best)
 			(push el result)))))
 	   (to-array (reverse result)))))
-  (cmd filter () ((fun fn) (list l)) (list)
+  (cmd filter ((:a anylist)) ((fun fn) (:a l)) (:a)
        "Returns a new list where only elements where the function returns true are retained."
        (save-arguments
        (list-to-list-iter l
@@ -866,6 +897,18 @@ returns the same a value for the second time, not necessarily consecutively."
 		(setf (gethash start seen) t)
 		(setf start (funcall a state 1 (list start)))))
 	 start))
+  (cmd fixpoint-with-history ((:a type)) ((fun a) (:a start)) (:a)
+       "Compute the fixedpoint of a applying function to an item, terminates when the function 
+returns the same a value for the second time, not necessarily consecutively. Return the
+full sequence generated."
+       (let ((seen (make-hash-table :test 'equalp))
+	     (res (new-array)))
+	 (save-arguments
+	   (loop while (not (gethash start seen)) do
+		(vector-push-extend start res)
+		(setf (gethash start seen) t)
+		(setf start (funcall a state 1 (list start)))))
+	 (make-type-list :array res)))
   (cmd ite () ((fun a) (fun b) (bool case)) ()
        "Run one of two functions based on if the next element on the stack is true or not."
        (save-arguments

@@ -46,6 +46,9 @@
   (res nil)
   (notes nil))
 
+(defstruct (type-raw
+	     (:conc-name "RAW-"))
+  (data nil))
 
 ;; This is the symbol which list-get returns when the list is empty.
 ;; It needs to be a fresh symbol so lists can contain nil.
@@ -113,6 +116,7 @@
     ((numberp el) 'int)
     ((eq (type-of el) 'boolean) 'bool)
     ((eq (type-of el) 'null) 'bool)
+    ((eq (type-of el) 'type-raw) 'raw)
 ;    ((listp el) 'list)
 ;    ((vectorp el) 'list)
     ((eq (type-of el) 'type-list) 

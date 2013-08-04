@@ -76,7 +76,13 @@
   5 range (3 add) map (*non-restoring 1 subtract) map)
 
 (test "Simple string" '(string . "01234")
-    5 range (48 add) map list-to-string)
+  5 range (48 add) map list-to-string)
+
+(test "Inline string" '(string . "hello world")
+  "hello world")
+
+(test "Inline string 2" '(string . "hello world")
+  "hello " "world" concatenate)
 
 (test-with-stack "Simple string 2" '(string . "23456") '("01234")
     (2 add) map)
