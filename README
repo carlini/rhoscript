@@ -1,0 +1,10 @@
+This is a compiler for rhoScript, a language designed for code golf. It is
+implemented in, and compiles to, common lisp.
+
+The code is currently reasonably stable. There are many features that are
+missing from the compiler, but there are not too many known bugs.
+
+To run the compiler, you will need SBCL <http://www.sbcl.org/> and CL-PPCRE
+<http://weitz.de/cl-ppcre/>.
+
+Want to contribute? I'll gladly accept pull requests.

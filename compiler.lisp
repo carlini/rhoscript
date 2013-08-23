@@ -869,7 +869,7 @@
 	     (tagged (tag-input with-types))	     
 	     (*compiled-code* nil))
 	(setf (symbol-function 'decompress) #'commands-to-commands)
-	(let ((answer (time (eval (run-compiled tagged init-stack)))))
+	(let ((answer (eval (run-compiled tagged init-stack))))
 	  (cons answer 
 		(bits-to-bytes 
 		 (list-to-bits 
