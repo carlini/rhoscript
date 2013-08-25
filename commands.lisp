@@ -213,7 +213,7 @@
        ;(declare (ignore a)))
        q)
   (cmd print () () ()
-       "Pretty-print the enture stack; usefully only for debugging."
+       "Pretty-print the entire stack; useful only for debugging."
        (progn
 	 (format t "Stack dump:~%")
 	 (loop for el in stack for i from 0 do
@@ -297,7 +297,7 @@
        "Logical or of the top two elements of the stack."
        (or a b))
   (cmd not () ((bool a)) (bool)
-       "Logical or of the top two elements of the stack."
+       "Logical not of the top element of the stack."
        (not a))
   (cmd and () ((bool a) (bool b)) (bool)
        "Logical and of the top two elements of the stack."
@@ -315,7 +315,7 @@
        "Checks if the first argument is less than or equal to the second."
        (> a b))
   (cmd add () ((int a) (int b)) (int)
-       "Adds the top two elements onf the stack."
+       "Adds the top two elements of the stack."
        (+ a b))
   (cmd negate () ((int a)) (int)
        "Negate the top element of the stack."
@@ -327,7 +327,7 @@
        "Decrements the top element of the stack."
        (- a 1))
   (cmd multiply () ((int a) (int b)) (int)
-       "Multiplies the top two elements onf the stack."
+       "Multiplies the top two elements of the stack."
        (* a b))
   (cmd subtract () ((int a) (int b)) (int)
        "Subtracts from the second-to-top by the top of the stack."
@@ -342,7 +342,7 @@
        "Divides from the top by the second-to-top of the stack."
        (floor (/ a b)))
   (cmd pow () ((int a) (int b)) (int)
-       "Multiplies the top two elements onf the stack."
+       "Multiplies the top two elements of the stack."
        (expt b a))
   (cmd square () ((int a)) (int)
        "Square the top element of the stack."
@@ -351,7 +351,7 @@
        "Computes the remainder of the second-to-top when divided by the top of the stack."
        (mod b a))
   (cmd divides () ((int a) (int b)) (bool)
-       "Test if the top element divides the secont-to-top element"
+       "Test if the top element divides the second-to-top element"
        (= (mod b a) 0))
   (cmd abs () ((int a)) (int)
        "Computes the absolute value of the top of the stack."
@@ -409,11 +409,11 @@
 	 (loop for n from b to (1- a) do (setf (aref arr (- n b)) n))
 	 (make-type-list :array arr)))
   (cmd get () ((int i) (list l)) (type)
-       "Indexes in to a list."
+       "Indexes into a list."
        ; TODO negative index?
        (list-get l i))
   (cmd substr () ((int start) (int end) (list l)) (list)
-       "Returns a subsequence of the elemtns of a list."
+       "Returns a subsequence of the elements of a list."
        ; TODO negative index?
        (let ((arr (new-array)))
 	 (loop for i from start to (1- end) do
@@ -556,7 +556,7 @@
 	  (if (not (eq (list-get l (1+ index)) null-symbol))
 	      (vector-push-extend each result)))))
   (cmd set-minus () ((list takeaway) (list given)) (list)
-       "The set difference of two lists; all of the elements in the second list, execpt
+       "The set difference of two lists; all of the elements in the second list, except
         for those which occur in the first list."
        (with-forced takeaway forced-takeaway-arr
 	 (let ((forced-takeaway (coerce forced-takeaway-arr 'list)))
@@ -582,7 +582,7 @@
 		   (vector-push-extend (to-array (list e1 e2)) result)
 		   (incf i))))))))
   (cmd transpose ((:a anylist)) ((:a l)) (:a)
-       "Takes a multi-dimensional list and reverses the order of the first and second axis.
+       "Takes a multi-dimensional list and reverses the order of the first and second axes.
 That is, if 'some_list i get j get' is the same as 'some_list transpose j get i get'."
        (let ((index 0))
 	 (creating-new-list
@@ -705,7 +705,7 @@ That is, if 'some_list i get j get' is the same as 'some_list transpose j get i 
        (with-forced s str
 	 (format t "~a" (map 'string #'code-char str))))
   (cmd str-to-int-base-10 () ((string s)) (int)
-       "Convert a string to an integer, treating the string in base 10."
+       "Convert a string to an integer, treating the string as base 10."
        (parse-integer (to-string s)))
   (cmd magic-read () ((string s)) (type)
        "Attempt to read the string in to the appropriate data structures. Try hard to do
@@ -769,7 +769,7 @@ are lower case."
 		    (cl-ppcre:split (list :sequence (to-string split-at)) 
 				    (to-string longstr)))))))
   (cmd simple-replace () ((string replace-with) (string replace-this) (string replace-in)) (string)
-       "Replace one string with another string for all occurances of a third string."
+       "Replace one string with another string for all occurrences of a third string."
        (with-forced replace-in _
 	 (with-forced replace-with _
 	   (with-forced replace-this _
@@ -806,7 +806,7 @@ stack, returning the top element of the stack."
 	   (next
 	    (vector-push-extend (funcall fn state 1 (list each)) result)))))
   (cmd keep-maxes-by () ((fun fn) (list l)) (list)
-       "Keep only the largest elements of a list as decided by a functions."
+       "Keep only the largest elements of a list as decided by a function."
        (save-arguments
 	 (let ((best (funcall fn state 1 (list (list-get l 0))))
 	       (result nil))
@@ -862,7 +862,7 @@ stack, returning the top element of the stack."
 	      (vector-push-extend (funcall fn state 1 (list number)) result)
 	      (incf number))))))
   (cmd tabulate () ((fun fn) (int upto)) (list)
-       "Create a sequence obtained by calling a function on the integers from 0"
+       "Create a sequence obtained by calling a function on the integers from 0 up to a number"
        (let ((number 0))
 	 (save-arguments
 	   (creating-new-list
@@ -871,7 +871,7 @@ stack, returning the top element of the stack."
 		(vector-push-extend (funcall fn state 1 (list number)) result)
 		(incf number)))))))
   (cmd partition () ((fun fn) (list l)) (list)
-       "Partition a list to a list o lists, where each element of each list has the same value 
+       "Partition a list to a list of lists, where each element of each list has the same value 
 when the function is applied to it."
        (let ((seen (make-hash-table :test 'equalp))
 	     (res (new-array)))
@@ -889,7 +889,7 @@ when the function is applied to it."
 	 (make-type-list :array res)))
 ;  (cmd unreduce () ((fun fn) (type something)) (list)
   (cmd fixpoint ((:a type)) ((fun a) (:a start)) (:a)
-       "Compute the fixedpoint of a applying function to an item, terminates when the function 
+       "Compute the fixedpoint of applying a function to an item, terminating when the function 
 returns the same a value for the second time, not necessarily consecutively."
        (let ((seen (make-hash-table :test 'equalp)))
 	 (save-arguments
@@ -898,7 +898,7 @@ returns the same a value for the second time, not necessarily consecutively."
 		(setf start (funcall a state 1 (list start)))))
 	 start))
   (cmd fixpoint-with-history ((:a type)) ((fun a) (:a start)) (:a)
-       "Compute the fixedpoint of a applying function to an item, terminates when the function 
+       "Compute the fixedpoint of applying a function to an item, terminating when the function 
 returns the same a value for the second time, not necessarily consecutively. Return the
 full sequence generated."
        (let ((seen (make-hash-table :test 'equalp))
@@ -910,7 +910,7 @@ full sequence generated."
 		(setf start (funcall a state 1 (list start)))))
 	 (make-type-list :array res)))
   (cmd ite () ((fun a) (fun b) (bool case)) ()
-       "Run one of two functions based on if the next element on the stack is true or not."
+       "Run one of two functions based on whether the next element on the stack is true or not."
        (save-arguments
 	(if case
 	    (funcall a state 0 nil)
