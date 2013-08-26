@@ -304,16 +304,16 @@
        (and a b))
   (cmd gte () ((int a) (int b)) (bool)
        "Check if the first argument is larger than the second."
-       (not (> a b)))
+       (>= b a))
   (cmd gt () ((int a) (int b)) (bool)
        "Check if the first argument is larger than or equal to the second."
-       (not (>= a b)))
+       (> b a))
   (cmd lt () ((int a) (int b)) (bool)
        "Check if the first argument is less than the second."
-       (>= a b))
+       (< b a))
   (cmd lte () ((int a) (int b)) (bool)
        "Check if the first argument is less than or equal to the second."
-       (> a b))
+       (<= b a))
   (cmd add () ((int a) (int b)) (int)
        "Add the top two elements of the stack."
        (+ a b))
