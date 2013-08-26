@@ -45,6 +45,42 @@
 (test "Inequality" 'true
   3 4 neq)
 
+(test "2 is less than 3" 'true
+      2 3 lt)
+
+(test "3 is not less than 3" 'false
+      3 3 lt)
+
+(test "4 is not less than 3" 'false
+      4 3 lt)
+
+(test "2 is less than or equal to 3" 'true
+      2 3 lte)
+
+(test "3 is less than or equal to 3" 'true
+      3 3 lte)
+
+(test "4 is not less than or equal to 3" 'false
+      4 3 lte)
+
+(test "2 is not greater than 3" 'false
+      2 3 gt)
+
+(test "3 is not greater than 3" 'false
+      3 3 gt)
+
+(test "4 is greater than 3" 'true
+      4 3 gt)
+
+(test "2 is not greater than or equal to 3" 'false
+      2 3 gte)
+
+(test "3 is greater than or equal to 3" 'true
+      3 3 gte)
+
+(test "4 is greater than or equal to 3" 'true
+      4 3 gte)
+
 (test "Add" 5
   2 3 add)
 
